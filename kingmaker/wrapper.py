@@ -34,6 +34,10 @@ class KingSpatialLikelihood:
     # either a KingPDF for standard point source searches
     king_pdf: KingPDF
 
+    # Source-level information
+    source_ras: Optional[npt.NDArray[Any]] = None
+    source_decs: Optional[npt.NDArray[Any]] = None
+
     # Have some place to cache the per-event information so we don't need to
     # recalculate it every time we evaluate the PDF.
     events: Optional[Any] = None
@@ -144,7 +148,7 @@ class KingSpatialLikelihood:
     def _sources_match(self, source_ras: npt.NDArray[Any], source_decs: npt.NDArray[Any]) -> bool:
         if self.source_ras is None:
             return False
-        if self.sources_decs is None:
+        if self.source_decs is None:
             return False
         if source_ras is None:
             return True
@@ -161,15 +165,13 @@ class KingSpatialLikelihood:
     def set_events(
         self,
         events: npt.NDArray[Any],
-        source_ras: Optional[npt.NDArray[np.floating]] = None,
-        source_decs: Optional[npt.NDArray[np.floating]] = None,
+        source_ras: Optional[npt.NDArray[np.floating]],
+        source_decs: Optional[npt.NDArray[np.floating]],
     ) -> None:
         """Calculate per-event pvalues for each spectral index by interpolating
         the King PDF at the nearest parametrization bin for each event.
         """
-        if self._events_match(events):
-            return
-        if self._sources_match(source_ras, source_decs):
+        if self._events_match(events) and self._sources_match(source_ras, source_decs):
             return
 
         self.events = events
@@ -177,10 +179,11 @@ class KingSpatialLikelihood:
         self.source_decs = source_decs
 
         # Make sure we have a matching number of source_ras and source_decs if we're given multiple sources.
-        assert source_ras is not None
-        if (source_ras is not None and source_decs is not None) and (
-            len(source_ras) != len(source_decs)
-        ):
+        if (source_ras is None) and (source_decs is None):
+            raise ValueError(
+                "No source_ras and source_decs were provided to the set_eventsfunction."
+            )
+        if (source_ras is None or source_decs is None) or (len(source_ras) != len(source_decs)):
             raise ValueError(
                 "The number of source_ras and source_decs must match. Please ensure "
                 "that these arrays have the same length when passing into set_events."
@@ -194,10 +197,9 @@ class KingSpatialLikelihood:
             self.multiple_source_warning_logged = True
 
         # Calculate angular distances and build event_mask. For the common
-        # single-source case with a sub-pi cutoff, a single parallel numba pass
+        # single-source case with a sub-pi cutoff, a single compiled numba pass
         # does the rectangular (dec, RA) pre-filter and the haversine together,
-        # reading each event's ra/dec only once. The multi-source fallback uses
-        # the vectorized sequential/parallel distance function directly.
+        # reading each event's ra/dec only once.
         cutoff = self.king_pdf.angular_cutoff
         if len(source_ras) == 1 and cutoff < np.pi:
             src_ra = float(source_ras[0])

@@ -76,9 +76,8 @@ class KingPDF:
             Normalized PDF value(s) with units of probability/steradian.
         """
         # Scalar-like: check if we can shortcut using the angular cutoff.
-        if np.isscalar(x):
-            if x > self.angular_cutoff:  # type: ignore[operator]
-                return 0
+        if np.isscalar(x) and (x > self.angular_cutoff):  # type: ignore[operator]
+            return 0
         elif isinstance(x, np.ndarray) and x.size == 1:
             if float(x.flat[0]) > self.angular_cutoff:
                 return 0
@@ -138,9 +137,13 @@ class KingPDF:
                 return 1
 
         if np.any(alpha <= 0):
-            raise ValueError("Received alpha <= 0. The PDF is not defined here.")
+            raise ValueError(
+                "Received alpha <= 0. The King distribution is onlydefined for alpha > 0."
+            )
         if np.any(beta <= 1):
-            raise ValueError("Received beta <= 1. The PDF is not defined here.")
+            raise ValueError(
+                "Received beta <= 1. The King distribution is onlydefined for beta > 1."
+            )
 
         # Broadcast
         x, alpha, beta = np.broadcast_arrays(x, alpha, beta)
