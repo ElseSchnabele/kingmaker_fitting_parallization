@@ -11,12 +11,6 @@ PDF Classes
    kingmaker.pdf.KingPDF
    kingmaker.pdf.TemplateSmearedKingPDF
 
-.. autoclass:: kingmaker.pdf.KingPDF
-   :members:
-
-.. autoclass:: kingmaker.pdf.TemplateSmearedKingPDF
-   :members:
-
 Distribution
 ------------
 
