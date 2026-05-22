@@ -90,10 +90,12 @@ class KingSpatialLikelihood:
         # for some bins.
         fitted_parameters: Dict[str, npt.NDArray[np.floating]] = {}
         if cache_parameters and (cache_name is not None) and exists(cache_name):
+            print('NOTE: Using cached King parameters...')
             fitted_parameters_npz = np.load(cache_name, allow_pickle=True)
             for key in fitted_parameters_npz.files:
                 fitted_parameters[key] = fitted_parameters_npz[key]
         else:
+            print('Fitting parameter space...')
             fitter = KingPSFFitter(
                 signal_events=signal_events,
                 parametrization_bins=parametrization_bins,
@@ -111,7 +113,6 @@ class KingSpatialLikelihood:
             fitted_parameters = fitter.fit_all_bins(verbose=True)
             if cache_parameters and (cache_name is not None):
                 np.savez(cache_name, **fitted_parameters)  # type: ignore[arg-type]
-
         # Store the fitted parameters and bins for later interpolation during PDF evaluation.
         self.parametrization_bins = fitted_parameters["parametrization_bins"]  # type: ignore[assignment]
         try:
@@ -130,6 +131,7 @@ class KingSpatialLikelihood:
         self.alpha_values = fitted_parameters["alpha"]
         self.beta_values = fitted_parameters["beta"]
 
+        self.fitted_parameters = fitted_parameters
         # Instantiate the PDF object.
         self.king_pdf = KingPDF(angular_cutoff=angular_cutoff)
         return
