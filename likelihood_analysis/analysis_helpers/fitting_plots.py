@@ -4,27 +4,276 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 
-def plot_fit_quality_hist(fit_parameters: Dict[str, Any], gamma_idx: int = 0):
-    fit_quality = fit_parameters["fit_quality"][gamma_idx]
-    plot_fit_quality = fit_quality[fit_quality > 0]
+def _get_quality_array(fit_parameters, gamma_idx=0, quality_key="fit_quality"):
+    quality = np.asarray(fit_parameters[quality_key][gamma_idx]).flatten()
+    label = r"$\chi^2$ value" if quality_key == "fit_quality" else "CDF RMS residual"
+    return quality, label
+
+
+def plot_fit_quality_hist(
+    fit_parameters: Dict[str, Any],
+    gamma_idx: int = 0,
+    range_max: float = 500,
+    quality_key: str = "fit_quality",
+):
+    fit_quality, xlabel = _get_quality_array(fit_parameters, gamma_idx, quality_key)
+    plot_fit_quality = fit_quality[np.isfinite(fit_quality) & (fit_quality > 0)]
 
     plt.figure(figsize=(8, 4))
-
     plt.grid(zorder=1)
-    plt.hist(plot_fit_quality, bins=50, zorder=2)
+
+    plt.hist(plot_fit_quality, bins=50, zorder=2, range=(0, range_max))
+
     plt.axvline(
         np.median(plot_fit_quality),
-        label=f"Median = {np.median(plot_fit_quality):.2f}",
+        label=f"Median = {np.median(plot_fit_quality):.3g}",
         color="red",
         linestyle="dashed",
         zorder=3,
     )
 
     plt.ylabel("Frequency")
-    plt.xlabel(r"$\chi^2$ value")
-    plt.xlim(0, 600)
+    plt.xlabel(xlabel)
+    plt.xlim(0, range_max)
     plt.legend()
     plt.show()
+
+
+def plot_fit_quality_vs_normalized_bin_volume(
+    fit_parameters,
+    gamma_idx=0,
+    n_x_bins=30,
+    figsize=(8, 5),
+    quality_key="fit_quality",
+):
+    parametrization_bins = fit_parameters["parametrization_bins"]
+    if isinstance(parametrization_bins, np.ndarray):
+        parametrization_bins = parametrization_bins.item()
+
+    fit_quality, ylabel_base = _get_quality_array(fit_parameters, gamma_idx, quality_key)
+    event_counts = np.asarray(fit_parameters["event_counts"][gamma_idx]).flatten()
+
+    bin_names = list(parametrization_bins.keys())
+    shape = fit_parameters[quality_key][gamma_idx].shape
+
+    volumes = np.zeros(shape)
+
+    for bin_idx in np.ndindex(*shape):
+        volume = 1.0
+
+        for dim, name in enumerate(bin_names):
+            bins = np.asarray(parametrization_bins[name])
+            i = bin_idx[dim]
+
+            if name == "dec":
+                width = np.sin(bins[i + 1]) - np.sin(bins[i])
+                full_width = np.sin(bins[-1]) - np.sin(bins[0])
+            else:
+                width = bins[i + 1] - bins[i]
+                full_width = bins[-1] - bins[0]
+
+            volume *= width / full_width
+
+        volumes[bin_idx] = volume
+
+    volumes = volumes.flatten()
+
+    mask = (
+        np.isfinite(fit_quality)
+        & np.isfinite(volumes)
+        & np.isfinite(event_counts)
+        & (fit_quality > 0)
+        & (volumes > 0)
+        & (event_counts > 0)
+    )
+
+    fit_quality = fit_quality[mask]
+    volumes = volumes[mask]
+
+    x_bins = np.logspace(np.log10(volumes.min()), np.log10(volumes.max()), n_x_bins)
+
+    bin_centers = []
+    median_fit_quality = []
+
+    for low, high in zip(x_bins[:-1], x_bins[1:]):
+        m = (volumes >= low) & (volumes < high)
+        if np.sum(m) == 0:
+            continue
+
+        bin_centers.append(np.sqrt(low * high))
+        median_fit_quality.append(np.median(fit_quality[m]))
+
+    plt.figure(figsize=figsize)
+    plt.plot(bin_centers, median_fit_quality, marker="o")
+
+    plt.xscale("log")
+    plt.yscale("log")
+
+    plt.xlabel("Normalized parameter-space bin volume")
+    plt.ylabel(f"Median {ylabel_base}")
+
+    plt.grid(alpha=0.3, which="both")
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_fit_quality_vs_counts(
+    fit_parameters,
+    gamma_idx=0,
+    n_x_bins=30,
+    figsize=(8, 5),
+    quality_key="fit_quality",
+):
+    fit_quality, ylabel_base = _get_quality_array(fit_parameters, gamma_idx, quality_key)
+    event_counts = np.asarray(fit_parameters["event_counts"][gamma_idx]).flatten()
+
+    mask = (
+        np.isfinite(fit_quality)
+        & np.isfinite(event_counts)
+        & (fit_quality > 0)
+        & (event_counts > 0)
+    )
+
+    fit_quality = fit_quality[mask]
+    event_counts = event_counts[mask]
+
+    x_bins = np.logspace(
+        np.log10(event_counts.min()),
+        np.log10(event_counts.max()),
+        n_x_bins,
+    )
+
+    bin_centers = []
+    median_fit_quality = []
+
+    for low, high in zip(x_bins[:-1], x_bins[1:]):
+        m = (event_counts >= low) & (event_counts < high)
+        if np.sum(m) == 0:
+            continue
+
+        bin_centers.append(np.sqrt(low * high))
+        median_fit_quality.append(np.median(fit_quality[m]))
+
+    plt.figure(figsize=figsize)
+    plt.plot(bin_centers, median_fit_quality, marker="o")
+
+    plt.xscale("log")
+    plt.yscale("log")
+
+    plt.xlabel("Number of events in fit bin")
+    plt.ylabel(f"Median {ylabel_base}")
+
+    plt.grid(alpha=0.3, which="both")
+    plt.tight_layout()
+    plt.show()
+    
+def plot_quality_heatmap_counts_vs_volume(
+    fit_parameters,
+    gamma_idx=0,
+    quality_key="fit_rms",  # "fit_rms" or "fit_quality"
+    n_count_bins=30,
+    n_volume_bins=30,
+    figsize=(8, 6),
+):
+    parametrization_bins = fit_parameters["parametrization_bins"]
+    if isinstance(parametrization_bins, np.ndarray):
+        parametrization_bins = parametrization_bins.item()
+
+    quality = np.asarray(fit_parameters[quality_key][gamma_idx]).flatten()
+    event_counts = np.asarray(fit_parameters["event_counts"][gamma_idx]).flatten()
+
+    bin_names = list(parametrization_bins.keys())
+    shape = fit_parameters[quality_key][gamma_idx].shape
+
+    volumes = np.zeros(shape)
+
+    for bin_idx in np.ndindex(*shape):
+        volume = 1.0
+
+        for dim, name in enumerate(bin_names):
+            bins = np.asarray(parametrization_bins[name])
+            i = bin_idx[dim]
+
+            if name == "dec":
+                width = np.sin(bins[i + 1]) - np.sin(bins[i])
+                full_width = np.sin(bins[-1]) - np.sin(bins[0])
+            else:
+                width = bins[i + 1] - bins[i]
+                full_width = bins[-1] - bins[0]
+
+            volume *= width / full_width
+
+        volumes[bin_idx] = volume
+
+    volumes = volumes.flatten()
+
+    mask = (
+        np.isfinite(quality)
+        & np.isfinite(event_counts)
+        & np.isfinite(volumes)
+        & (quality > 0)
+        & (event_counts > 0)
+        & (volumes > 0)
+    )
+
+    quality = quality[mask]
+    event_counts = event_counts[mask]
+    volumes = volumes[mask]
+
+    count_bins = np.logspace(
+        np.log10(event_counts.min()),
+        np.log10(event_counts.max()),
+        n_count_bins + 1,
+    )
+
+    volume_bins = np.logspace(
+        np.log10(volumes.min()),
+        np.log10(volumes.max()),
+        n_volume_bins + 1,
+    )
+
+    heatmap = np.full((n_volume_bins, n_count_bins), np.nan)
+
+    for i in range(n_volume_bins):
+        for j in range(n_count_bins):
+            m = (
+                (volumes >= volume_bins[i])
+                & (volumes < volume_bins[i + 1])
+                & (event_counts >= count_bins[j])
+                & (event_counts < count_bins[j + 1])
+            )
+
+            if np.any(m):
+                heatmap[i, j] = np.median(quality[m])
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    cmap = plt.get_cmap("viridis").copy()
+    cmap.set_bad("white")
+
+    pcm = ax.pcolormesh(
+        count_bins,
+        volume_bins,
+        np.ma.masked_invalid(np.log10(heatmap)),
+        shading="auto",
+        cmap=cmap,
+    )
+
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+
+    ax.set_xlabel("Number of events in fit bin")
+    ax.set_ylabel("Normalized parameter-space bin volume")
+
+    label = r"Median $\chi^2$" if quality_key == "fit_quality" else "Median CDF RMS residual"
+    cbar = plt.colorbar(pcm, ax=ax)
+    cbar.set_label(f"log10({label})")
+
+    ax.grid(alpha=0.3, which="both")
+    plt.tight_layout()
+    plt.show()
+
+    return ax
 
 def plot_grid_fit_2d(
     fit_parameters: Dict[str, Any],
@@ -120,6 +369,26 @@ def plot_grid_fit_2d(
     x_bins = parametrization_bins[x_name]
     y_bins = parametrization_bins[y_name]
     y_edges = np.degrees(y_bins) if y_to_degrees else y_bins
+    
+    # Mask skipped/failed bins so they appear white and do not affect color scaling
+    event_counts = fit_parameters["event_counts"][gamma_index]
+    fit_quality = fit_parameters["fit_quality"][gamma_index]
+
+    invalid_mask = (
+        (event_counts < minimum_counts)
+        | ((event_counts >= minimum_counts) & (fit_quality <= 0))
+    )
+
+    invalid_2d = invalid_mask[tuple(slicer)]
+
+    if current_remaining_dims == [y_dim, x_dim]:
+        invalid_2d = invalid_2d.T
+
+    values_2d = np.ma.masked_where(invalid_2d, values_2d)
+
+    # make masked regions white
+    cmap_obj = plt.get_cmap(cmap).copy()
+    cmap_obj.set_bad(color="white")
 
     fig, ax = plt.subplots(figsize=figsize)
 
@@ -128,7 +397,7 @@ def plot_grid_fit_2d(
         y_edges,
         values_2d.T,
         shading="auto",
-        cmap=cmap,
+        cmap=cmap_obj,
     )
 
     plt.colorbar(pcm, ax=ax, label=cbar_label)
@@ -310,7 +579,10 @@ def plot_selected_fit_bins(
         alpha = fit_alpha[param_idx]
         beta = fit_beta[param_idx]
 
-        dpsi_fine = np.linspace(0, min(8 * alpha, np.pi), 1000)
+        valid_edges = bins[: np.sum(mask) + 1]
+        dpsi_max = valid_edges[-1]
+
+        dpsi_fine = np.linspace(0, dpsi_max, 1000)
 
         # Same King PDF shape as your KingPDF implementation should give:
         pdf_fit = (1 - 1 / beta) / (2 * np.pi * alpha**2) * (
