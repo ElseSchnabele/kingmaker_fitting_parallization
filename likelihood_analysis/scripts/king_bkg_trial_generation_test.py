@@ -11,14 +11,14 @@ python king_bkg_trial_generation_test.py \
   --N_trials 20 \
   --seed 0 \
   --mp_cpus 1 \
-  --gammas 2.0 2.5 2.7 \
+  --gammas 2.0 2.7 \
   --out_dir /tmp/king_debug \
   --ana_dir /data/user/fkrafft/csky_gfu_tests \
   --file_identifier smoke_parallel
 """
 
 import sys
-
+import json
 import os
 import argparse
 import inspect
@@ -35,6 +35,7 @@ from kingmaker_fork.kingmaker.wrapper import KingSpatialLikelihood
 from csky_gfu_tests.custom_gfu_specs import GFUDataSpecs as custom_gfu
 from kingmaker_fork.likelihood_analysis.utils.trial_runner_config_loading import save_king_trial_runner_config
 from kingmaker_fork.likelihood_analysis.utils.parallel_king_trials import get_many_fits_from_trials
+from kingmaker_fork.likelihood_analysis.analysis_helpers.to_jsonable import to_jsonable
 
 import csky as cy
 from csky.utils import Arrays
@@ -88,14 +89,14 @@ def main():
     src_sin_dec = args.sin_dec
 
     weight_field = "oneweight"
-    angular_cutoff_deg = 15.0
+    angular_cutoff_deg =15.
     dpsi_nbins = 101
-    minimum_counts = 50
+    minimum_counts = 200
 
     parametrization_bins = {
         "log10energy": np.array([2, 3, 4, 5, 6]),
         "dec": np.arcsin(np.linspace(-1, 1, 8)),
-        "sigma": 25,
+        "sigma": 10,
     }
 
     repo_cache = cy.utils.ensure_dir("/data/user/fkrafft/csky_repo")
@@ -208,7 +209,7 @@ def main():
     cy.CONF["mp_cpus"] = mp_cpus
 
     with time("trial runner setup"):
-        tr = cy.get_trial_runner(
+        tr:cy.trial.TrialRunner = cy.get_trial_runner(
             ana=ana,
             src=srcs,
             mp_cpus=mp_cpus,
@@ -276,6 +277,52 @@ def main():
     print(out_file)
     print("\nTimer:")
     print(timer)
+    
+    #fit trials with chi2
+    bg_chi2 = cy.dists.Chi2TSD(bg_trials)
+    
+    #estimate sensitivity
+    with time('ps sensitivity'):
+        print(f'Estimating sensitivity for sin(dec) = {src_sin_dec}')
+        sens: dict = tr.find_n_sig(
+            # ts, threshold
+            bg_chi2.median(), # p = 50%
+            # beta, fraction of trials which should exceed the threshold
+            0.9, # beta = 90%
+            # n_inj step size for initial scan
+            n_sig_step=1,
+            # this many trials at a time
+            batch_size=500,
+            # tolerance, as estimated relative error
+            tol=.05,
+            mp_cpus = mp_cpus
+            )
+    #saving sensitivity   
+    json_sens_dict = to_jsonable(sens)
+    with open(os.path.join(out_dir, f"TEST_king_sens_sindec_{np.round(np.sin(dec), 3)}"
+        f"_N_{N_trials}_{file_identifier}.json"), "w") as f:
+        json.dump(json_sens_dict, f)
+        
+    #estimate discovery potential
+    with time('ps discovery potential'):
+        print(f'Estimating discovery potential for sin(dec) = {src_sin_dec}')
+        disc: dict = tr.find_n_sig(
+            bg_chi2.isf_nsigma(5), # p = 5 sigma
+            0.5, # beta = 50%
+            n_sig_step=5, 
+            batch_size=500, 
+            tol=.05,
+            mp_cpus= mp_cpus
+            )
+    
+    #saving discovery potential   
+    json_sens_dict = to_jsonable(disc)
+    with open(os.path.join(out_dir, f"TEST_king_disc_sindec_{np.round(np.sin(dec), 3)}"
+        f"_N_{N_trials}_{file_identifier}.json"), "w") as f:
+        json.dump(json_sens_dict, f)
+    
+    
+    
 
 
 if __name__ == "__main__":

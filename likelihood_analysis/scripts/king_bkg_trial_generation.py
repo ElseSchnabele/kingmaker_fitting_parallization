@@ -12,32 +12,35 @@ Arguments:
 
 import sys
 import os
-
+import json
+import numpy as np
+import argparse
+import inspect
 
 
 print("Python executable:", sys.executable)
 print("Python path:", sys.path)
 sys.path.insert(0, "/home/fkrafft")
-import numpy as np
-import sys
-import argparse
-import inspect
+
 
 from kingmaker_fork.likelihood_analysis.utils.trial_runner_config_loading import save_king_trial_runner_config
 from kingmaker_fork.likelihood_analysis.utils.parallel_king_trials import get_many_fits_from_trials
-
+from kingmaker_fork.likelihood_analysis.analysis_helpers.to_jsonable import to_jsonable
 from kingmaker_fork.kingmaker.wrapper import KingSpatialLikelihood
 
 from  csky_gfu_tests.custom_gfu_specs import GFUDataSpecs as custom_gfu
 import csky as cy
 from csky.utils import Arrays
+
 timer = cy.timing.Timer()
 time = timer.time
 
 # Cache arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("--seed", type = int, default = 0, help = 'trial seed')
+parser.add_argument("--min_counts", type = int, help = 'Minimum number of events in bin for fitting (else skip)')
 parser.add_argument("--mp_cpus", type = int, default = 2, help = 'number of CPUs to assign for multiprocessing')
+parser.add_argument("--calc_sens", type = bool, default = 2, help = 'Flag for running sensitivity and discovery potential estimation')
 parser.add_argument(
     "--gammas",
     type=float,
@@ -58,25 +61,26 @@ args = parser.parse_args()
 ana_dir = cy.utils.ensure_dir(args.ana_dir)
 seed = args.seed
 mp_cpus = args.mp_cpus
-
+calc_sens = args.calc_sens
 N_trials = args.N_trials
 out_dir = args.out_dir
 spectral_indices = np.array(args.gammas)
 file_identifier = args.file_identifier
 src_sin_dec = args.sin_dec 
+minimum_counts = args.min_counts
 
 ################### NOTE: some fixed parameters: ###################
 weight_field: str = "oneweight"
 angular_cutoff_deg: float = 15 
 dpsi_nbins = 101
-minimum_counts = 50
 gamma = 2.0   # default fit/injection gamma
 
 # fixed bin edges in energy and declination but equal-p in sigma
 parametrization_bins = {
-    "log10energy": np.array([2, 3, 4, 5, 6]),
-    "dec": np.arcsin(np.linspace(-1, 1, 8)),
-    "sigma": 25,
+    'log10energy':  np.array([2, 2.75, 3.5, 4.25, 5., 6.0]), #  energy bins from 100 GeV to 1 PeV
+    'dec': np.arcsin(np.linspace(-1, 1, 10)),  #  10 equal bins in sin_dec
+    'sigma': 12
+    
 }
 #####################################################################
 
@@ -231,6 +235,52 @@ with time("run test trials"):
         new_bg_array,
     )
     
+if calc_sens:
+    #fit trials with chi2
+    bg_chi2 = cy.dists.Chi2TSD(bg_trials)
+    
+    #estimate sensitivity
+    with time('ps sensitivity'):
+        print(f'Estimating sensitivity for sin(dec) = {src_sin_dec}')
+        sens: dict = tr.find_n_sig(
+            # ts, threshold
+            bg_chi2.median(), # p = 50%
+            # beta, fraction of trials which should exceed the threshold
+            0.9, # beta = 90%
+            # n_inj step size for initial scan
+            n_sig_step=1,
+            # this many trials at a time
+            batch_size=500,
+            # tolerance, as estimated relative error
+            tol=.05,
+            mp_cpus = mp_cpus
+            )
+    #saving sensitivity   
+    json_sens_dict = to_jsonable(sens)
+    with open(os.path.join(out_dir, f"TEST_king_sens_sindec_{np.round(np.sin(dec), 3)}"
+        f"_N_{N_trials}_{file_identifier}.json"), "w") as f:
+        json.dump(json_sens_dict, f)
+        
+    #estimate discovery potential
+    with time('ps discovery potential'):
+        print(f'Estimating discovery potential for sin(dec) = {src_sin_dec}')
+        disc: dict = tr.find_n_sig(
+            bg_chi2.isf_nsigma(5), # p = 5 sigma
+            0.5, # beta = 50%
+            n_sig_step=5, 
+            batch_size=500, 
+            tol=.05,
+            mp_cpus= mp_cpus
+            )
+    
+    #saving discovery potential   
+    json_sens_dict = to_jsonable(disc)
+    with open(os.path.join(out_dir, f"TEST_king_disc_sindec_{np.round(np.sin(dec), 3)}"
+        f"_N_{N_trials}_{file_identifier}.json"), "w") as f:
+        json.dump(json_sens_dict, f)
+    
+    
+        
 ### Diagnostics Block ###
 print("\n" + "=" * 60)
 print("KING BACKGROUND TRIAL CONFIGURATION")
