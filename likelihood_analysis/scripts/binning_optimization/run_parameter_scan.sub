@@ -1,0 +1,47 @@
+executable = run_fitting_parameter_scan.py
+
+arguments = --scan_config parameter_scan_config.json \
+            --candidate_id $(CANDIDATE_ID) \
+            --ana_dir /data/user/fkrafft/csky_gfu_tests\
+
+transfer_input_files = run_fitting_parameter_scan.py, parameter_scan_config.json
+
+when_to_transfer_output = ON_EXIT
+should_transfer_files = YES
+
+request_cpus = 4
+request_memory = 8GB
+
+output = /data/user/fkrafft/csky_king_tests/binning_scan/log/$(CANDIDATE_ID).out
+error  = /data/user/fkrafft/csky_king_tests/binning_scan/log/$(CANDIDATE_ID).err
+log    = /scratch/fkrafft/logs/run_fitting_parameter_scan.log
+
+
+queue CANDIDATE_ID from (
+E6_D9_S08_MC50_more_signal
+E6_D9_S08_MC100_more_signal
+E6_D9_S08_MC150_more_signal
+E6_D9_S08_MC200_more_signal
+E6_D9_S08_MC300_more_signal
+E6_D9_S08_MC500_more_signal
+E6_D9_S08_MC750_more_signal
+E6_D9_S08_MC1000_more_signal
+
+E6_D9_S10_MC50_more_signal
+E6_D9_S10_MC100_more_signal
+E6_D9_S10_MC150_more_signal
+E6_D9_S10_MC200_more_signal
+E6_D9_S10_MC300_more_signal
+E6_D9_S10_MC500_more_signal
+E6_D9_S10_MC750_more_signal
+E6_D9_S10_MC1000_more_signal
+
+E6_D9_S12_MC50_more_signal
+E6_D9_S12_MC100_more_signal
+E6_D9_S12_MC150_more_signal
+E6_D9_S12_MC200_more_signal
+E6_D9_S12_MC300_more_signal
+E6_D9_S12_MC500_more_signal
+E6_D9_S12_MC750_more_signal
+E6_D9_S12_MC1000_more_signal
+)

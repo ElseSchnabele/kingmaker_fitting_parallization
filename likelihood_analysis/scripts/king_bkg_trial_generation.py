@@ -38,9 +38,8 @@ time = timer.time
 # Cache arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("--seed", type = int, default = 0, help = 'trial seed')
-parser.add_argument("--min_counts", type = int, help = 'Minimum number of events in bin for fitting (else skip)')
 parser.add_argument("--mp_cpus", type = int, default = 2, help = 'number of CPUs to assign for multiprocessing')
-parser.add_argument("--calc_sens", type = bool, default = 2, help = 'Flag for running sensitivity and discovery potential estimation')
+parser.add_argument("--calc_sens", type = int, default = 1, help = 'Flag for running sensitivity and discovery potential estimation')
 parser.add_argument(
     "--gammas",
     type=float,
@@ -61,20 +60,20 @@ args = parser.parse_args()
 ana_dir = cy.utils.ensure_dir(args.ana_dir)
 seed = args.seed
 mp_cpus = args.mp_cpus
-calc_sens = args.calc_sens
+calc_sens = bool(args.calc_sens)
 N_trials = args.N_trials
 out_dir = args.out_dir
 spectral_indices = np.array(args.gammas)
 file_identifier = args.file_identifier
 src_sin_dec = args.sin_dec 
-minimum_counts = args.min_counts
+
 
 ################### NOTE: some fixed parameters: ###################
 weight_field: str = "oneweight"
 angular_cutoff_deg: float = 15 
 dpsi_nbins = 101
 gamma = 2.0   # default fit/injection gamma
-
+minimum_counts = 300
 # fixed bin edges in energy and declination but equal-p in sigma
 parametrization_bins = {
     'log10energy':  np.array([2, 2.75, 3.5, 4.25, 5., 6.0]), #  energy bins from 100 GeV to 1 PeV

@@ -7,9 +7,8 @@ arguments = --sin_dec $(SINDEC) \
             --gammas 1.8 2.0 2.5 2.7 \
             --out_dir /data/user/fkrafft/csky_king_tests/$(FILE_ID) \
             --ana_dir /data/user/fkrafft/csky_gfu_tests \
-            --file_identifier $(FILE_ID)
-            --calc_sens False
-            --min_counts 200
+            --file_identifier $(FILE_ID) \
+            --calc_sens 1 \
 
 output = /data/user/fkrafft/csky_king_tests/$(FILE_ID)/log/job_sindec_$(SINDEC)_seed_$(SEED).out
 error  = /data/user/fkrafft/csky_king_tests/$(FILE_ID)/log/job_sindec_$(SINDEC)_seed_$(SEED).err
@@ -23,12 +22,12 @@ request_cpus = 32
 request_memory = 8GB
 
 queue SINDEC, SEED, FILE_ID from (
--0.5  0  min_count_200_coarse_angErr
--0.3  0  min_count_200_coarse_angErr
--0.15  0  min_count_200_coarse_angErr
--0.1  0  min_count_200_coarse_angErr
--0.05  0  min_count_200_coarse_angErr
- 0.0  0  min_count_200_coarse_angErr
- 0.2  0  min_count_200_coarse_angErr
- 0.4  0  min_count_200_coarse_angErr
+-0.5  0  min_count_300_angErr12
+-0.3  0  min_count_300_angErr12
+-0.15  0  min_count_300_angErr12
+-0.1  0  min_count_300_angErr12
+-0.05  0  min_count_300_angErr12
+ 0.0  0  min_count_300_angErr12
+ 0.2  0  min_count_300_angErr12
+ 0.4  0  min_count_300_angErr12
 )
