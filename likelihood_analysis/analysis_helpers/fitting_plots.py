@@ -468,7 +468,7 @@ def plot_grid_fit_2d(
 
 def plot_selected_fit_bins(
     fit_parameters: Dict[str, Any],
-    mode: Literal["best", "worst", "random"] = "best",
+    mode: Literal["best", "worst", "random", "grid"] = "best",
     gamma_idx: int = 0,
     n_plots: int = 6,
     minimum_counts: int = 100,
@@ -534,8 +534,38 @@ def plot_selected_fit_bins(
         rng = np.random.default_rng(random_seed)
         indices = rng.choice(len(good_bins), size=min(n_plots, len(good_bins)), replace=False)
         selected_bins = [good_bins[i] for i in indices]
+    elif mode == "grid":
+        # Select bins approximately equally distributed in parametrization-bin space
+        good_bin_indices = np.asarray([b[0] for b in good_bins])
+        good_chi2 = np.asarray([b[1] for b in good_bins])
+
+        n_select = min(n_plots, len(good_bins))
+
+        # Normalize bin coordinates to [0, 1] in each dimension
+        shape = np.asarray(fit_alpha[gamma_idx].shape)
+        denom = np.maximum(shape - 1, 1)
+
+        good_pos = good_bin_indices / denom
+
+        # Equally spaced target positions along the diagonal of the bin space
+        targets_1d = np.linspace(0, 1, n_select)
+        target_pos = np.repeat(targets_1d[:, None], good_pos.shape[1], axis=1)
+
+        selected_bins = []
+        used = set()
+
+        for target in target_pos:
+            distances = np.linalg.norm(good_pos - target, axis=1)
+
+            for idx in np.argsort(distances):
+                bin_tuple = tuple(good_bin_indices[idx])
+                if bin_tuple not in used:
+                    selected_bins.append((bin_tuple, good_chi2[idx]))
+                    used.add(bin_tuple)
+                    break
+
     else:
-        raise ValueError("mode must be one of: 'best', 'worst', 'random'")
+        raise ValueError("mode must be one of: 'best', 'worst', 'random', 'grid'")
 
     n_cols = min(3, n_plots)
     n_rows = int(np.ceil(len(selected_bins) / n_cols))
@@ -620,12 +650,14 @@ def plot_selected_fit_bins(
         ax.set_xlabel("Angular Error (degrees)")
         ax.set_ylabel("Normalized Density")
         ax.set_yscale("log")
+        #ax.set_xscale("log")
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8)
+        ax.set_xlim(0, 5)
 
         ax.text(
-            0.05,
-            0.95,
+            0.8,
+            0.15,
             f"chi2={chi2:.2f}",
             transform=ax.transAxes,
             va="top",

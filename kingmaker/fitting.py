@@ -361,6 +361,8 @@ class KingPSFFitter:
         expected = self.king_pdf.cdf(bins[1:], alpha, beta)
         expected *= cdf_hist.max() / expected.max()
         val = (cdf_hist - expected) ** 2 / np.nextafter(cdf_variance, np.inf)
+        #var = np.maximum(cdf_variance, 1e-4)
+        #val = (cdf_hist - expected) ** 2 / var
         if np.any(~np.isfinite(val)):
             val[:] = 100000
         return val.sum() / len(bins)
