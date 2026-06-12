@@ -1,33 +1,28 @@
 executable = king_bkg_trial_generation.py
 
 arguments = --sin_dec $(SINDEC) \
-            --N_trials 1000 \
-            --seed $(SEED) \
+            --N_trials $(NTRIALS) \
+            --seed 0 \
             --mp_cpus 32 \
             --gammas 1.8 2.0 2.5 2.7 \
             --out_dir /data/user/fkrafft/csky_king_tests/$(FILE_ID) \
             --ana_dir /data/user/fkrafft/csky_gfu_tests \
             --file_identifier $(FILE_ID) \
             --calc_sens 1 \
+            --ang_err_bins $(ANGERRBINS) \
+            --min_counts $(MINCOUNTS) \
 
-output = /data/user/fkrafft/csky_king_tests/$(FILE_ID)/log/job_sindec_$(SINDEC)_seed_$(SEED).out
-error  = /data/user/fkrafft/csky_king_tests/$(FILE_ID)/log/job_sindec_$(SINDEC)_seed_$(SEED).err
+output = /data/user/fkrafft/csky_king_tests/$(FILE_ID)/log/job_sindec_$(SINDEC)_angerrbins_$(ANGERRBINS)_mincounts_$(MINCOUNTS).out
+error  = /data/user/fkrafft/csky_king_tests/$(FILE_ID)/log/job_sindec_$(SINDEC)_angerrbins_$(ANGERRBINS)_mincounts_$(MINCOUNTS).err
 log    = /scratch/fkrafft/logs/king_trial_job.log
 
 transfer_input_files = king_bkg_trial_generation.py
 when_to_transfer_output = ON_EXIT
 should_transfer_files = YES
 
-request_cpus = 32
-request_memory = 8GB
+request_cpus = 16
+request_memory = 6GB
 
-queue SINDEC, SEED, FILE_ID from (
--0.5  0  min_count_300_angErr12
--0.3  0  min_count_300_angErr12
--0.15  0  min_count_300_angErr12
--0.1  0  min_count_300_angErr12
--0.05  0  min_count_300_angErr12
- 0.0  0  min_count_300_angErr12
- 0.2  0  min_count_300_angErr12
- 0.4  0  min_count_300_angErr12
+queue SINDEC, ANGERRBINS, MINCOUNTS, NTRIALS, FILE_ID, from (
+-0.05  12  150 1000 min_count_150_angErr12_e4floor_fits
 )

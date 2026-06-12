@@ -38,6 +38,8 @@ time = timer.time
 # Cache arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("--seed", type = int, default = 0, help = 'trial seed')
+parser.add_argument("--min_counts", type = int, default = 0, help = 'min events for fitting bin')
+parser.add_argument("--ang_err_bins", type = int, default = 0, help = 'number of angular error bins')
 parser.add_argument("--mp_cpus", type = int, default = 2, help = 'number of CPUs to assign for multiprocessing')
 parser.add_argument("--calc_sens", type = int, default = 1, help = 'Flag for running sensitivity and discovery potential estimation')
 parser.add_argument(
@@ -73,12 +75,12 @@ weight_field: str = "oneweight"
 angular_cutoff_deg: float = 15 
 dpsi_nbins = 101
 gamma = 2.0   # default fit/injection gamma
-minimum_counts = 300
+minimum_counts = args.min_counts
 # fixed bin edges in energy and declination but equal-p in sigma
 parametrization_bins = {
     'log10energy':  np.array([2, 2.75, 3.5, 4.25, 5., 6.0]), #  energy bins from 100 GeV to 1 PeV
-    'dec': np.arcsin(np.linspace(-1, 1, 10)),  #  10 equal bins in sin_dec
-    'sigma': 12
+    'dec': np.arcsin(np.linspace(-1, 1, 10)),  #   equal bins in sin_dec
+    'sigma': args.ang_err_bins
     
 }
 #####################################################################
@@ -98,7 +100,7 @@ for name in ["root", "local_root", "remote_root", "base_dir", "dir"]:
 
 
 with time('ana setup (from cache-to-disk)'):
-    ana = cy.get_analysis(repo, 'version-001-p09' , custom_gfu.gfu_11yr, dir = ana_dir)
+    ana = cy.get_analysis(repo, 'version-001-p09' , custom_gfu.gfu_19_to_23, dir = ana_dir)
 
 fit_cache_filename = f"king_fit_custom_gfu_{file_identifier}.npz"
 
@@ -118,7 +120,7 @@ king_wrapper = KingSpatialLikelihood(
                                     angular_cutoff = np.radians(angular_cutoff_deg),
                                        )
 
-def king_func(ra, dec, sigma, energy, src, pdf_bg, gamma=2.0, **kwargs):
+def king_func(ra, dec, sigma, energy, src, pdf_bg, gamma, **kwargs):
     ev = Arrays({
         "ra": ra,
         "dec": dec,
@@ -273,10 +275,28 @@ if calc_sens:
             )
     
     #saving discovery potential   
-    json_sens_dict = to_jsonable(disc)
+    json_disc_dict = to_jsonable(disc)
     with open(os.path.join(out_dir, f"TEST_king_disc_sindec_{np.round(np.sin(dec), 3)}"
         f"_N_{N_trials}_{file_identifier}.json"), "w") as f:
-        json.dump(json_sens_dict, f)
+        json.dump(json_disc_dict, f)
+        
+    #estimate 3 sigma discovery potential
+    with time('ps 3 sigma discovery potential'):
+        print(f'Estimating 3 sigma discovery potential for sin(dec) = {src_sin_dec}')
+        disc_3sig: dict = tr.find_n_sig(
+            bg_chi2.isf_nsigma(3), # p =35 sigma
+            0.5, # beta = 50%
+            n_sig_step=5, 
+            batch_size=500, 
+            tol=.05,
+            mp_cpus= mp_cpus
+            )
+    
+    #saving discovery potential   
+    json_3sig_dic_dict = to_jsonable(disc_3sig)
+    with open(os.path.join(out_dir, f"TEST_king_3sig_disc_sindec_{np.round(np.sin(dec), 3)}"
+        f"_N_{N_trials}_{file_identifier}.json"), "w") as f:
+        json.dump(json_3sig_dic_dict, f)
     
     
         
@@ -315,12 +335,15 @@ print(f"minimum_counts        : {minimum_counts}")
 
 print("\n--- Parameterization Bins ---")
 for key, val in parametrization_bins.items():
-    print(f"\n{key}:")
-    print(f"  n_bins              : {len(val)-1}")
-    print(f"  min                 : {np.min(val)}")
-    print(f"  max                 : {np.max(val)}")
-    print(f"  first 5             : {val[:5]}")
-    print(f"  last 5              : {val[-5:]}")
+    if isinstance(val, int):
+        print(f"eq.-p bins            : {str(val)}")
+    else:
+        print(f"\n{key}:")
+        print(f"  n_bins              : {len(val)-1}")
+        print(f"  min                 : {np.min(val)}")
+        print(f"  max                 : {np.max(val)}")
+        print(f"  first 5             : {val[:5]}")
+        print(f"  last 5              : {val[-5:]}")
 
 print("\n--- Trial Runner Settings ---")
 print(f"use_bdt               : True")
