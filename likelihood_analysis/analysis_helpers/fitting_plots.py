@@ -1,7 +1,16 @@
-from typing import Optional, Tuple, Dict, Any, Literal
+from typing import Optional, Tuple, Dict, Any, Literal, Callable
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+
+from kingmaker_fork.likelihood_analysis.analysis_helpers.rms_fit_quality import cdf_rms
+from kingmaker_fork.likelihood_analysis.analysis_helpers.rms_fit_quality import cdf_root_median_squared
+from kingmaker_fork.likelihood_analysis.analysis_helpers.rms_fit_quality import weighted_cdf_rms
+from kingmaker_fork.likelihood_analysis.analysis_helpers.rms_fit_quality import density_weighted_cdf_rms
+from kingmaker_fork.likelihood_analysis.analysis_helpers.rms_fit_quality import pdf_rms
+from kingmaker_fork.likelihood_analysis.analysis_helpers.rms_fit_quality import pdf_root_median_squared
+from kingmaker_fork.likelihood_analysis.analysis_helpers.rms_fit_quality import weighted_pdf_rms
+from kingmaker_fork.likelihood_analysis.analysis_helpers.rms_fit_quality import density_weighted_pdf_rms
 
 
 def _get_quality_array(fit_parameters, gamma_idx=0, quality_key="fit_quality"):
@@ -468,12 +477,16 @@ def plot_grid_fit_2d(
 
 def plot_selected_fit_bins(
     fit_parameters: Dict[str, Any],
+    king_pdf: Callable,
     mode: Literal["best", "worst", "random", "grid"] = "best",
+    metric: Literal['CDF_chi2', 'CDF_RMS', 'CDF_root_median_squared', 'CDF_weighted_rms', 'CDF_density_weighted_rms',
+                                 'PDF_RMS', 'PDF_root_median_squared', 'PDF_weighted_rms', 'PDF_density_weighted_rms'] = 'CDF_chi2',
     gamma_idx: int = 0,
     n_plots: int = 6,
     minimum_counts: int = 100,
     random_seed: Optional[int] = None,
     figsize: Tuple[float, float] = (15, 10),
+    
 ):
     """
     Plot selected stored King fits from fit_all_bins output.
@@ -518,10 +531,35 @@ def plot_selected_fit_bins(
             event_counts[param_idx] >= minimum_counts
             and np.any(histograms[param_idx] > 0)
         ):
-            chi2 = fit_quality[param_idx]
-
-            if np.isfinite(chi2) and chi2 > 0:
-                good_bins.append((bin_idx, chi2))
+            
+            if metric == 'CDF_chi2':
+                quality_metric = fit_quality[param_idx]
+            else:
+                if metric == 'CDF_RMS':
+                    func = cdf_rms
+                elif metric == 'CDF_root_median_squared':
+                    func = cdf_root_median_squared
+                elif metric == 'CDF_weighted_rms':
+                    func = weighted_cdf_rms   
+                elif metric == 'CDF_density_weighted_rms':
+                    func = density_weighted_cdf_rms         
+                elif metric == 'PDF_RMS':
+                    func = pdf_rms
+                elif metric == 'PDF_root_median_squared':
+                    func = pdf_root_median_squared
+                elif metric == 'PDF_weighted_rms':
+                    func = weighted_pdf_rms   
+                elif metric == 'PDF_density_weighted_rms':
+                    func = density_weighted_pdf_rms   
+                else:
+                    raise ValueError("metric must be one of: 'chi2', 'RMS', 'root_median_squared'")
+                quality_metric = func(
+                        fit_parameters = fit_parameters,
+                        gamma_idx= gamma_idx,
+                        minimum_counts= minimum_counts,
+                        king_pdf = king_pdf)[param_idx]
+            if np.isfinite(quality_metric) and quality_metric > 0:
+                good_bins.append((bin_idx, quality_metric))
 
     if len(good_bins) == 0:
         raise RuntimeError("No valid fitted bins found.")
@@ -537,7 +575,7 @@ def plot_selected_fit_bins(
     elif mode == "grid":
         # Select bins approximately equally distributed in parametrization-bin space
         good_bin_indices = np.asarray([b[0] for b in good_bins])
-        good_chi2 = np.asarray([b[1] for b in good_bins])
+        good_quality = np.asarray([b[1] for b in good_bins])
 
         n_select = min(n_plots, len(good_bins))
 
@@ -560,7 +598,7 @@ def plot_selected_fit_bins(
             for idx in np.argsort(distances):
                 bin_tuple = tuple(good_bin_indices[idx])
                 if bin_tuple not in used:
-                    selected_bins.append((bin_tuple, good_chi2[idx]))
+                    selected_bins.append((bin_tuple, good_quality[idx]))
                     used.add(bin_tuple)
                     break
 
@@ -576,10 +614,10 @@ def plot_selected_fit_bins(
     print(f"Found {len(good_bins)} bins with stored fits")
     print(f"Showing {mode} bins:")
 
-    for i, (bin_idx, chi2) in enumerate(selected_bins):
-        print(f"{i + 1}: bin={bin_idx}, chi2={chi2:.3f}")
+    for i, (bin_idx, quality) in enumerate(selected_bins):
+        print(f"{i + 1}: bin={bin_idx}, {metric}={quality:.3f}")
 
-    for ax, (bin_idx, chi2) in zip(axes, selected_bins):
+    for ax, (bin_idx, quality) in zip(axes, selected_bins):
         param_idx = (gamma_idx,) + bin_idx
 
         hist = histograms[param_idx]
@@ -614,10 +652,7 @@ def plot_selected_fit_bins(
 
         dpsi_fine = np.linspace(0, dpsi_max, 1000)
 
-        # Same King PDF shape as your KingPDF implementation should give:
-        pdf_fit = (1 - 1 / beta) / (2 * np.pi * alpha**2) * (
-            1 + dpsi_fine**2 / (2 * beta * alpha**2)
-        ) ** (-beta)
+        pdf_fit = king_pdf.pdf(dpsi_fine, alpha,beta)
 
         if np.nanmax(pdf_fit) > 0:
             pdf_fit *= np.nanmax(hist[mask]) / np.nanmax(pdf_fit)
@@ -654,11 +689,19 @@ def plot_selected_fit_bins(
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8)
         ax.set_xlim(0, 5)
-
         ax.text(
-            0.8,
+            0.5,
             0.15,
-            f"chi2={chi2:.2f}",
+            f"{metric}={quality:.2f}",
+            transform=ax.transAxes,
+            va="top",
+            fontsize=10,
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.7),
+        )
+        ax.text(
+            0.2,
+            0.15,
+            f"#Events={event_counts[param_idx]}",
             transform=ax.transAxes,
             va="top",
             fontsize=10,
