@@ -8,7 +8,7 @@ import numpy as np
 
 from kingmaker_fork.kingmaker.fitting import KingPSFFitter
 from kingmaker_fork.kingmaker.pdf import KingPDF
-from kingmaker_fork.likelihood_analysis.analysis_helpers.rms_fit_quality import compute_cdf_rms_fit_quality
+from kingmaker_fork.likelihood_analysis.analysis_helpers.rms_fit_quality import density_weighted_cdf_rms
 from kingmaker_fork.likelihood_analysis.utils.performance_evaluation import fitting_score_components
 
 
@@ -83,13 +83,17 @@ class KingFittingScanScheduler:
 
             king_pdf = KingPDF(angular_cutoff=np.radians(fixed["angular_cutoff_deg"]))
 
-            rms = compute_cdf_rms_fit_quality(
+            rms = density_weighted_cdf_rms(
                 fit_parameters=fit_parameters,
                 king_pdf=king_pdf,
                 minimum_counts=candidate["minimum_counts"],
             )
 
             score_info = fitting_score_components(
+                alpha = 0,
+                beta = 0,
+                mu = 0,
+                median_rms_weight= 1,
                 fit_parameters=fit_parameters,
                 rms=rms,
                 min_counts=candidate["minimum_counts"],

@@ -4,13 +4,14 @@ arguments = --sin_dec $(SINDEC) \
             --N_trials $(NTRIALS) \
             --seed 0 \
             --mp_cpus 32 \
-            --gammas 1.8 2.0 2.5 2.7 \
+            --gammas 1.8 2.0 2.5 2.7 3.0 3.2 \
             --out_dir /data/user/fkrafft/csky_king_tests/$(FILE_ID) \
             --ana_dir /data/user/fkrafft/csky_gfu_tests \
             --file_identifier $(FILE_ID) \
             --calc_sens 1 \
             --ang_err_bins $(ANGERRBINS) \
             --min_counts $(MINCOUNTS) \
+            --signal_injection_gamma $(SIGNAL_INJ_GAMMA) \
 
 output = /data/user/fkrafft/csky_king_tests/$(FILE_ID)/log/job_sindec_$(SINDEC)_angerrbins_$(ANGERRBINS)_mincounts_$(MINCOUNTS).out
 error  = /data/user/fkrafft/csky_king_tests/$(FILE_ID)/log/job_sindec_$(SINDEC)_angerrbins_$(ANGERRBINS)_mincounts_$(MINCOUNTS).err
@@ -20,9 +21,40 @@ transfer_input_files = king_bkg_trial_generation.py
 when_to_transfer_output = ON_EXIT
 should_transfer_files = YES
 
-request_cpus = 16
-request_memory = 6GB
+request_cpus = 32
+request_memory = 8GB
 
-queue SINDEC, ANGERRBINS, MINCOUNTS, NTRIALS, FILE_ID, from (
--0.05  12  150 1000 min_count_150_angErr12_e4floor_fits
+queue SINDEC, ANGERRBINS, MINCOUNTS, NTRIALS, SIGNAL_INJ_GAMMA, FILE_ID, from (
+-0.5 12 150 1000 2.0 min_count_150_angErr12_gamma_2.0
+-0.3 12 150 1000 2.0 min_count_150_angErr12_gamma_2.0
+-0.15 12 150 1000 2.0 min_count_150_angErr12_gamma_2.0
+-0.1 12 150 1000 2.0 min_count_150_angErr12_gamma_2.0
+-0.05 12 150 1000 2.0 min_count_150_angErr12_gamma_2.0
+0.0 12 150 1000 2.0 min_count_150_angErr12_gamma_2.0
+0.2 12 150 1000 2.0 min_count_150_angErr12_gamma_2.0
+0.4 12 150 1000 2.0 min_count_150_angErr12_gamma_2.0
+-0.5 12 150 1000 2.5 min_count_150_angErr12_gamma_2.5
+-0.3 12 150 1000 2.5 min_count_150_angErr12_gamma_2.5
+-0.15 12 150 1000 2.5 min_count_150_angErr12_gamma_2.5
+-0.1 12 150 1000 2.5 min_count_150_angErr12_gamma_2.5
+-0.05 12 150 1000 2.5 min_count_150_angErr12_gamma_2.5
+0.0 12 150 1000 2.5 min_count_150_angErr12_gamma_2.5
+0.2 12 150 1000 2.5 min_count_150_angErr12_gamma_2.5
+0.4 12 150 1000 2.5 min_count_150_angErr12_gamma_2.5
+-0.5 12 150 1000 2.7 min_count_150_angErr12_gamma_2.7
+-0.3 12 150 1000 2.7 min_count_150_angErr12_gamma_2.7
+-0.15 12 150 1000 2.7 min_count_150_angErr12_gamma_2.7
+-0.1 12 150 1000 2.7 min_count_150_angErr12_gamma_2.7
+-0.05 12 150 1000 2.7 min_count_150_angErr12_gamma_2.7
+0.0 12 150 1000 2.7 min_count_150_angErr12_gamma_2.7
+0.2 12 150 1000 2.7 min_count_150_angErr12_gamma_2.7
+0.4 12 150 1000 2.7 min_count_150_angErr12_gamma_2.7
+-0.5 12 150 1000 3.0 min_count_150_angErr12_gamma_3.0
+-0.3 12 150 1000 3.0 min_count_150_angErr12_gamma_3.0
+-0.15 12 150 1000 3.0 min_count_150_angErr12_gamma_3.0
+-0.1 12 150 1000 3.0 min_count_150_angErr12_gamma_3.0
+-0.05 12 150 1000 3.0 min_count_150_angErr12_gamma_3.0
+0.0 12 150 1000 3.0 min_count_150_angErr12_gamma_3.0
+0.2 12 150 1000 3.0 min_count_150_angErr12_gamma_3.0
+0.4 12 150 1000 3.0 min_count_150_angErr12_gamma_3.0
 )
