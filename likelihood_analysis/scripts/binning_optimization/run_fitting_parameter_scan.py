@@ -29,12 +29,13 @@ def main():
     ana = cy.get_analysis(
         repo,
         "version-001-p09",
-        custom_gfu.gfu_19_to_23_more_signal,
+        custom_gfu.gfu_19_to_23,
         dir=args.ana_dir,
     )
     
 
     scheduler = KingFittingScanScheduler(
+        
         config_path=args.scan_config,
         signal_events=ana[0].sig.as_array,
     )
@@ -49,7 +50,7 @@ def main():
     if candidate is None:
         raise ValueError(f"Candidate not found: {args.candidate_id}")
 
-    scheduler.run_candidate(candidate, overwrite= False)
+    scheduler.run_candidate(candidate, overwrite= True)
 
 
 if __name__ == "__main__":

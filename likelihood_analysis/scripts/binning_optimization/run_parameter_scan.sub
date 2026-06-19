@@ -18,30 +18,21 @@ log    = /scratch/fkrafft/logs/run_fitting_parameter_scan.log
 
 
 queue CANDIDATE_ID from (
-E6_D9_S08_MC50_more_signal
-E6_D9_S08_MC100_more_signal
-E6_D9_S08_MC150_more_signal
-E6_D9_S08_MC200_more_signal
-E6_D9_S08_MC300_more_signal
-E6_D9_S08_MC500_more_signal
-E6_D9_S08_MC750_more_signal
-E6_D9_S08_MC1000_more_signal
-
-E6_D9_S10_MC50_more_signal
-E6_D9_S10_MC100_more_signal
-E6_D9_S10_MC150_more_signal
-E6_D9_S10_MC200_more_signal
-E6_D9_S10_MC300_more_signal
-E6_D9_S10_MC500_more_signal
-E6_D9_S10_MC750_more_signal
-E6_D9_S10_MC1000_more_signal
-
-E6_D9_S12_MC50_more_signal
-E6_D9_S12_MC100_more_signal
-E6_D9_S12_MC150_more_signal
-E6_D9_S12_MC200_more_signal
-E6_D9_S12_MC300_more_signal
-E6_D9_S12_MC500_more_signal
-E6_D9_S12_MC750_more_signal
-E6_D9_S12_MC1000_more_signal
+E6_D9_S10_MC500
+E6_D9_S10_MC300
+E6_D9_S12_MC300
+E6_D9_S08_MC500
+E6_D9_S12_MC150
+E6_D9_S15_MC100
+E6_D9_S12_MC1000
+E6_D9_S25_MC1000
+E6_D9_S12_MC50
+E6_D9_S08_MC50
+E6_D9_S12_MC10
+E6_D9_S08_MC10
+E6_D9_S05_MC150
+E6_D9_S05_MC300
+E6_D9_S15_MC150
+E6_D9_S15_MC500
+E6_D9_S15_MC1000
 )

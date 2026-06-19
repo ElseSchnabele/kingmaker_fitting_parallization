@@ -38,23 +38,17 @@ time = timer.time
 # Cache arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("--seed", type = int, default = 0, help = 'trial seed')
-parser.add_argument("--min_counts", type = int, default = 0, help = 'min events for fitting bin')
-parser.add_argument("--ang_err_bins", type = int, default = 0, help = 'number of angular error bins')
 parser.add_argument("--mp_cpus", type = int, default = 2, help = 'number of CPUs to assign for multiprocessing')
 parser.add_argument("--calc_sens", type = int, default = 1, help = 'Flag for running sensitivity and discovery potential estimation')
-parser.add_argument(
-    "--gammas",
-    type=float,
-    nargs="+",
-    help="List of spectral indices used for King interpolation/fits",
-)
+
 parser.add_argument("--N_trials", type = int, default = 1000, help = 'number of trials to run')
 # king fits will cached and loaded automatically if simulation already exists 
 parser.add_argument("--out_dir", type = str )
+parser.add_argument("--config_dir", type = str )
 parser.add_argument("--ana_dir", type = str )
-parser.add_argument("--file_identifier", type = str )
+parser.add_argument("--candidate_id", type = str )
 parser.add_argument("--sin_dec", type = float)
-parser.add_argument("--signal_injection_gamma", type = float)
+
 
 args = parser.parse_args()
 
@@ -66,16 +60,59 @@ N_trials = args.N_trials
 out_dir = args.out_dir
 if not os.path.exists(out_dir):
     os.mkdir(os.path.join(out_dir, 'log'))
-spectral_indices = np.array(args.gammas)
-file_identifier = args.file_identifier
-src_sin_dec = args.sin_dec 
-signal_injection_gamma = args.signal_injection_gamma  # default fit/injection gamma
 
+candidate_id = args.candidate_id
+src_sin_dec = args.sin_dec 
+config_dir = args.config_dir
+
+
+file_identifier = f"SINDEC_{src_sin_dec}_NTRIALS_{N_trials}_{candidate_id}"
+
+
+with open(config_dir, "r") as f:
+            config= json.load(f)
+candidate_dir = os.path.join(out_dir, candidate_id)
+os.makedirs(candidate_dir, exist_ok=True)
+
+for c in config["candidates"]:
+        if c["id"] == candidate_id:
+            candidate = c
+            break
+        
+bins_cfg = candidate["parametrization_bins"]
+parametrization_bins = {}
+
+#build parametrization bins
+for key, value in bins_cfg.items():
+    if key == "dec_sindec_edges":
+        parametrization_bins["dec"] = np.arcsin(np.asarray(value, dtype=float))
+    elif isinstance(value, list):
+        parametrization_bins[key] = np.asarray(value, dtype=float)
+    else:
+        parametrization_bins[key] = value
 ################### NOTE: some fixed parameters: ###################
-weight_field: str = "oneweight"
+#SHOULD NOT BE CHANGED AS NOT INCODED IN IDENTIFIER: RISK OVERWRITE!!!  
+
+# load spectral indices
+spectral_indices= np.asarray(config["spectral_indices"])
+
+#default gamma for signal injection
+
+
+fixed = config["fixed"]
+signal_injection_gamma = fixed["signal_injection_gamma"]
+dpsi_nbins=fixed["dpsi_nbins"]
+minimum_counts=candidate["minimum_counts"]
+weight_field=fixed["weight_field"]
+true_ra_name=fixed["true_ra_name"]
+true_dec_name=fixed["true_dec_name"]
+true_energy_name=fixed["true_energy_name"]
+angular_cutoff_deg = fixed["angular_cutoff_deg"]
+
+""" weight_field: str = "oneweight"
 angular_cutoff_deg: float = 15 
 dpsi_nbins = 101
-
+gamma = 2.0   # default fit/injection gamma
 minimum_counts = args.min_counts
 # fixed bin edges in energy and declination but equal-p in sigma
 parametrization_bins = {
@@ -83,7 +120,7 @@ parametrization_bins = {
     'dec': np.arcsin(np.linspace(-1, 1, 10)),  #   equal bins in sin_dec
     'sigma': args.ang_err_bins
     
-}
+} """
 #####################################################################
 
 # Load analysis
@@ -115,9 +152,9 @@ king_wrapper = KingSpatialLikelihood(
                                     dpsi_nbins=dpsi_nbins,
                                     minimum_counts=minimum_counts,
                                     weight_field = weight_field,
-                                    true_ra_name = "true_ra",
-                                    true_dec_name = "true_dec",
-                                    true_energy_name = "true_energy",
+                                    true_ra_name = true_ra_name,
+                                    true_dec_name = true_dec_name,
+                                    true_energy_name = true_energy_name,
                                     angular_cutoff = np.radians(angular_cutoff_deg),
                                        )
 
@@ -156,7 +193,7 @@ features = {
 }
 
 fits = {
-    "gamma": tuple(args.gammas),
+    "gamma": spectral_indices,
 }
 
 dtype = [('gamma', '<f8'), ('ns', '<f8'), ('ts', '<f8')]
@@ -233,7 +270,7 @@ with time("run test trials"):
     bg_dir = cy.utils.ensure_dir(out_dir)
 
     np.save(
-        f'{bg_dir}/king_bkg_trials_sindec_{src_sin_dec}_N_{N_trials}_{file_identifier}.npy',
+        f'{bg_dir}/king_bkg_trials_sindec_{np.round(np.sin(dec), 3)}_N_{N_trials}_{file_identifier}.npy',
         new_bg_array,
     )
     
@@ -330,7 +367,6 @@ if calc_sens:
     with open(os.path.join(out_dir, f"TEST_king_3sig_disc_sindec_{src_sin_dec}"
         f"_N_{N_trials}_{file_identifier}.json"), "w") as f:
         json.dump(json_3sig_dic_dict, f)
-    
     
         
 ### Diagnostics Block ###

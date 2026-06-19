@@ -1,0 +1,26 @@
+executable = king_trials_from_config.py
+
+arguments = --sin_dec $(SINDEC) \
+            --N_trials $(NTRIALS) \
+            --seed 0 \
+            --mp_cpus 32 \
+            --out_dir /data/user/fkrafft/king_llh_binning_run/$(CANDIDATE_ID) \
+            --ana_dir /data/user/fkrafft/king_llh_binning_run \
+            --config_dir /home/fkrafft/kingmaker_fork/likelihood_analysis/scripts/candidates.json \
+            --candidate_id $(CANDIDATE_ID) \
+            --calc_sens 1 \
+
+output = /data/user/fkrafft/king_llh_binning_run/$(CANDIDATE_ID)/log/job_sindec_$(SINDEC)_Ntrials$(NTRIALS)_$(CANDIDATE_ID).out
+error  = /data/user/fkrafft/king_llh_binning_run/$(CANDIDATE_ID)/log/job_sindec_$(SINDEC)_Ntrials$(NTRIALS)_$(CANDIDATE_ID).err
+log    = /scratch/fkrafft/logs/king_trial_job.log
+
+transfer_input_files = king_trials_from_config.py
+when_to_transfer_output = ON_EXIT
+should_transfer_files = YES
+
+request_cpus = 32
+request_memory = 8GB
+
+queue SINDEC, NTRIALS, CANDIDATE_ID from (
+-0.5 1000 E4_f22ddd_D8_d83749_S05_MC150
+)
