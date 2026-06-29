@@ -2,6 +2,8 @@ from typing import Optional, Tuple, Dict, Any, Literal, Callable
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from matplotlib.lines import Line2D
+import histlite as hl
 
 from kingmaker_fork.likelihood_analysis.analysis_helpers.rms_fit_quality import cdf_rms
 from kingmaker_fork.likelihood_analysis.analysis_helpers.rms_fit_quality import cdf_root_median_squared
@@ -474,38 +476,184 @@ def plot_grid_fit_2d(
     return ax
 
 
+def plot_TS_signal_ray_vs_king(
+                            src_sin_dec: float,
+                            ray_bkg, 
+                            king_bkg, 
+                            ray_sig = None, 
+                            king_sig = None, 
+                            n_sig_ray:int = 0, 
+                            n_sig_king:int = 0,
+                            figsize: Tuple[float, float] = (8, 6),
+                               ):
+        fig, ax = plt.subplots(figsize = figsize)
+        #king bkg
+        h_king = king_bkg.get_hist(bins= 50).normalize()
+        hl.plot1d(
+            ax,
+            h_king,
+            color = 'blue',
+            crosses=True,
+            label=f"Background TS King"
+        )
+
+        x_king = h_king.centers[0]
+        norm_king = h_king.integrate().values
+        ax.grid(which = 'both', alpha = 0.5)
+        ax.semilogy(
+            x_king,
+            norm_king * king_bkg.pdf(x_king),
+            lw=1,
+            ls="--",
+            color = 'black',
+        )
+        ax.axvline(king_bkg.median(), color = 'red', linestyle = 'dotted')
+        
+        # ray_bkg
+        h_ray = ray_bkg.get_hist(bins= 50).normalize()
+        hl.plot1d(
+            ax,
+            h_ray,
+            color = 'red',
+            crosses=True,
+            label=f"Background TS Rayleigh"
+        )
+
+        x_ray = h_ray.centers[0]
+        norm_ray = h_ray.integrate().values
+        ax.grid(which = 'both', alpha = 0.5)
+        ax.semilogy(
+            x_ray,
+            norm_ray * ray_bkg.pdf(x_ray),
+            lw=1,
+            ls="--",
+            color = 'black',
+        )
+        ax.axvline(ray_bkg.median(), color = 'red', linestyle = 'dotted')
+        
+        #king signal injected
+        if king_sig is not None:
+            h_king_sig = king_sig.get_hist(bins= 50).normalize()
+            hl.plot1d(
+                ax,
+                h_king_sig,
+                color = 'C0',
+                crosses=True,
+                label=r"Signal TS King $n_{inj} = $" + str(n_sig_king)
+            )
+
+            x_king_sig = h_king_sig.centers[0]
+            norm_king_sig = h_king_sig.integrate().values
+            ax.grid(which = 'both', alpha = 0.5)
+            ax.semilogy(
+                x_king_sig,
+                norm_king_sig * king_sig.pdf(x_king_sig),
+                lw=1,
+                ls="--",
+                color = 'black',
+            )       
+            ax.axvline(king_sig.median(), color = 'C0', linestyle = 'dotted')  
+            
+        if ray_sig is not None:
+            h_ray_sig = ray_sig.get_hist(bins= 50).normalize()
+            hl.plot1d(
+                ax,
+                h_ray_sig,
+                color = 'C1',
+                crosses=True,
+                label=r"Signal TS Rayleigh $n_{inj} = $" + str(n_sig_king)
+            )
+
+            x_ray_sig = h_ray_sig.centers[0]
+            norm_ray_sig = h_ray_sig.integrate().values
+            ax.grid(which = 'both', alpha = 0.5)
+            ax.semilogy(
+                x_ray_sig,
+                norm_ray_sig * ray_sig.pdf(x_ray_sig),
+                lw=1,
+                ls="--",
+                color = 'black',
+            )       
+            ax.axvline(ray_sig.median(), color = 'C1', linestyle = 'dotted')  
+        
+        
+        
+        
+        ax.set_xlabel("TS")
+        ax.set_ylabel("PDF")
+        ax.set_title("$\sin{\delta}$" + f" = {src_sin_dec:.2f}")
+        ax.legend()
+        plt.tight_layout()
+        plt.show()
 
 def plot_selected_fit_bins(
     fit_parameters: Dict[str, Any],
     king_pdf: Callable,
     mode: Literal["best", "worst", "random", "grid"] = "best",
-    metric: Literal['CDF_chi2', 'CDF_RMS', 'CDF_root_median_squared', 'CDF_weighted_rms', 'CDF_density_weighted_rms',
-                                 'PDF_RMS', 'PDF_root_median_squared', 'PDF_weighted_rms', 'PDF_density_weighted_rms'] = 'CDF_chi2',
+    metric: Literal[
+        "CDF_chi2", "CDF_RMS", "CDF_root_median_squared",
+        "CDF_weighted_rms", "CDF_density_weighted_rms",
+        "PDF_RMS", "PDF_root_median_squared",
+        "PDF_weighted_rms", "PDF_density_weighted_rms",
+    ] = "CDF_chi2",
     gamma_idx: int = 0,
     n_plots: int = 6,
     minimum_counts: int = 100,
     random_seed: Optional[int] = None,
+    x_log=True,
+    y_log=True,
+    normalize_fit_to_hist: bool = True,
+    show_rayleigh_ref: bool = False,
+    plot_kind: Literal["density", "radial"] = "density",
     figsize: Tuple[float, float] = (15, 10),
-    
+
+    # Rayleigh reference options
+    signal_events: Optional[Any] = None,
+    rayleigh_sigma_name: str = "sigma",
+    rayleigh_weighted: bool = False,
+    weight_field: Optional[str] = None,
+    true_energy_name: str = "true_energy",
+    show_data : bool = True
 ):
     """
-    Plot selected stored King fits from fit_all_bins output.
-
-    Parameters
-    ----------
-    fit_parameters:
-        Output dictionary from fit_all_bins().
-    mode:
-        "best", "worst", or "random".
-    gamma_idx:
-        Spectral index index.
-    n_plots:
-        Number of bins to plot.
-    minimum_counts:
-        Minimum event count used to classify fitted bins.
-    random_seed:
-        Seed for random mode.
+    Plot selected stored King fits and optionally overlay the corresponding
+    Rayleigh reference from the MC events in the same parametrization bin.
     """
+
+    def rayleigh_density(dpsi, sigma):
+        return np.exp(-0.5 * (dpsi / sigma) ** 2) / (2 * np.pi * sigma**2)
+
+    def rayleigh_radial(dpsi, sigma):
+        return (dpsi / sigma**2) * np.exp(-0.5 * (dpsi / sigma) ** 2)
+
+    def get_event_values(events, name):
+        if hasattr(events, name):
+            return getattr(events, name)
+        return events[name]
+
+    def get_bin_event_mask(events, parametrization_bins, bin_names, bin_idx):
+        mask = np.ones(len(events), dtype=bool)
+
+        for dim, name in enumerate(bin_names):
+            edges = np.asarray(parametrization_bins[name])
+            idx = bin_idx[dim]
+
+            vals = np.asarray(get_event_values(events, name))
+
+            if idx == len(edges) - 2:
+                mask &= vals >= edges[idx]
+                mask &= vals <= edges[idx + 1]
+            else:
+                mask &= vals >= edges[idx]
+                mask &= vals < edges[idx + 1]
+
+        return mask
+
+    if show_rayleigh_ref and signal_events is None:
+        raise ValueError(
+            "show_rayleigh_ref=True requires signal_events, i.e. the same MC events "
+            "used to build the King fit histograms."
+        )
 
     parametrization_bins = fit_parameters["parametrization_bins"]
     if isinstance(parametrization_bins, np.ndarray):
@@ -521,7 +669,6 @@ def plot_selected_fit_bins(
     fit_quality = fit_parameters["fit_quality"]
     event_counts = fit_parameters["event_counts"]
 
-    # Collect bins with valid stored fits
     good_bins = []
 
     for bin_idx in np.ndindex(*fit_alpha[gamma_idx].shape):
@@ -531,33 +678,35 @@ def plot_selected_fit_bins(
             event_counts[param_idx] >= minimum_counts
             and np.any(histograms[param_idx] > 0)
         ):
-            
-            if metric == 'CDF_chi2':
+            if metric == "CDF_chi2":
                 quality_metric = fit_quality[param_idx]
             else:
-                if metric == 'CDF_RMS':
+                if metric == "CDF_RMS":
                     func = cdf_rms
-                elif metric == 'CDF_root_median_squared':
+                elif metric == "CDF_root_median_squared":
                     func = cdf_root_median_squared
-                elif metric == 'CDF_weighted_rms':
-                    func = weighted_cdf_rms   
-                elif metric == 'CDF_density_weighted_rms':
-                    func = density_weighted_cdf_rms         
-                elif metric == 'PDF_RMS':
+                elif metric == "CDF_weighted_rms":
+                    func = weighted_cdf_rms
+                elif metric == "CDF_density_weighted_rms":
+                    func = density_weighted_cdf_rms
+                elif metric == "PDF_RMS":
                     func = pdf_rms
-                elif metric == 'PDF_root_median_squared':
+                elif metric == "PDF_root_median_squared":
                     func = pdf_root_median_squared
-                elif metric == 'PDF_weighted_rms':
-                    func = weighted_pdf_rms   
-                elif metric == 'PDF_density_weighted_rms':
-                    func = density_weighted_pdf_rms   
+                elif metric == "PDF_weighted_rms":
+                    func = weighted_pdf_rms
+                elif metric == "PDF_density_weighted_rms":
+                    func = density_weighted_pdf_rms
                 else:
-                    raise ValueError("metric must be one of: 'chi2', 'RMS', 'root_median_squared'")
+                    raise ValueError(f"Unknown metric: {metric}")
+
                 quality_metric = func(
-                        fit_parameters = fit_parameters,
-                        gamma_idx= gamma_idx,
-                        minimum_counts= minimum_counts,
-                        king_pdf = king_pdf)[param_idx]
+                    fit_parameters=fit_parameters,
+                    gamma_idx=gamma_idx,
+                    minimum_counts=minimum_counts,
+                    king_pdf=king_pdf,
+                )[param_idx]
+
             if np.isfinite(quality_metric) and quality_metric > 0:
                 good_bins.append((bin_idx, quality_metric))
 
@@ -566,26 +715,29 @@ def plot_selected_fit_bins(
 
     if mode == "best":
         selected_bins = sorted(good_bins, key=lambda x: x[1])[:n_plots]
+
     elif mode == "worst":
         selected_bins = sorted(good_bins, key=lambda x: x[1], reverse=True)[:n_plots]
+
     elif mode == "random":
         rng = np.random.default_rng(random_seed)
-        indices = rng.choice(len(good_bins), size=min(n_plots, len(good_bins)), replace=False)
+        indices = rng.choice(
+            len(good_bins),
+            size=min(n_plots, len(good_bins)),
+            replace=False,
+        )
         selected_bins = [good_bins[i] for i in indices]
+
     elif mode == "grid":
-        # Select bins approximately equally distributed in parametrization-bin space
         good_bin_indices = np.asarray([b[0] for b in good_bins])
         good_quality = np.asarray([b[1] for b in good_bins])
 
         n_select = min(n_plots, len(good_bins))
 
-        # Normalize bin coordinates to [0, 1] in each dimension
         shape = np.asarray(fit_alpha[gamma_idx].shape)
         denom = np.maximum(shape - 1, 1)
-
         good_pos = good_bin_indices / denom
 
-        # Equally spaced target positions along the diagonal of the bin space
         targets_1d = np.linspace(0, 1, n_select)
         target_pos = np.repeat(targets_1d[:, None], good_pos.shape[1], axis=1)
 
@@ -620,42 +772,60 @@ def plot_selected_fit_bins(
     for ax, (bin_idx, quality) in zip(axes, selected_bins):
         param_idx = (gamma_idx,) + bin_idx
 
-        hist = histograms[param_idx]
-        uncertainty = uncertainties[param_idx]
-        bins = dpsi_bins[param_idx]
+        hist = np.asarray(histograms[param_idx], dtype=float)
+        uncertainty = np.asarray(uncertainties[param_idx], dtype=float)
+        bins = np.asarray(dpsi_bins[param_idx], dtype=float)
 
         mask = hist > 0
 
         if np.sum(mask) == 0:
-            ax.text(0.5, 0.5, f"Bin {bin_idx}\nNo histogram", ha="center", va="center")
+            ax.text(
+                0.5,
+                0.5,
+                f"Bin {bin_idx}\nNo histogram",
+                ha="center",
+                va="center",
+            )
             ax.set_axis_off()
             continue
 
-        bin_centers = (bins[:-1] + bins[1:]) / 2
-        bin_centers = bin_centers[mask]
-
-        ax.errorbar(
-            np.degrees(bin_centers),
-            hist[mask],
-            yerr=uncertainty[mask],
-            fmt="o",
-            label="MC Events",
-            color="black",
-            markersize=4,
-        )
+        bin_centers_all = (bins[:-1] + bins[1:]) / 2
+        bin_centers = bin_centers_all[mask]
 
         alpha = fit_alpha[param_idx]
         beta = fit_beta[param_idx]
 
         valid_edges = bins[: np.sum(mask) + 1]
         dpsi_max = valid_edges[-1]
-
         dpsi_fine = np.linspace(0, dpsi_max, 1000)
 
-        pdf_fit = king_pdf.pdf(dpsi_fine, alpha,beta)
+        if plot_kind == "radial":
+            jac_hist = 2 * np.pi * np.sin(bin_centers)
+            hist_plot = hist[mask] * jac_hist
+            uncertainty_plot = uncertainty[mask] * jac_hist
 
-        if np.nanmax(pdf_fit) > 0:
-            pdf_fit *= np.nanmax(hist[mask]) / np.nanmax(pdf_fit)
+            pdf_fit = king_pdf.pdf(dpsi_fine, alpha, beta)
+            pdf_fit = 2 * np.pi * np.sin(dpsi_fine) * pdf_fit
+
+        else:
+            hist_plot = hist[mask]
+            uncertainty_plot = uncertainty[mask]
+
+            pdf_fit = king_pdf.pdf(dpsi_fine, alpha, beta)
+
+        if normalize_fit_to_hist:
+            if np.nanmax(pdf_fit) > 0:
+                pdf_fit *= np.nanmax(hist_plot) / np.nanmax(pdf_fit)
+
+        ax.errorbar(
+            np.degrees(bin_centers),
+            hist_plot,
+            yerr=uncertainty_plot,
+            fmt="o",
+            label="MC Events",
+            color="black",
+            markersize=4,
+        )
 
         ax.plot(
             np.degrees(dpsi_fine),
@@ -666,6 +836,92 @@ def plot_selected_fit_bins(
             color="blue",
         )
 
+        if show_rayleigh_ref:
+            event_mask = get_bin_event_mask(
+                signal_events,
+                parametrization_bins,
+                bin_names,
+                bin_idx,
+            )
+
+            sigmas = np.asarray(
+                get_event_values(signal_events, rayleigh_sigma_name)[event_mask],
+                dtype=float,
+            )
+
+            valid_sigma = np.isfinite(sigmas) & (sigmas > 0)
+            sigmas = sigmas[valid_sigma]
+
+            if len(sigmas) > 0:
+                if plot_kind == "radial":
+                    rayleigh_curves = rayleigh_radial(
+                        dpsi_fine[:, None],
+                        sigmas[None, :],
+                    )
+                else:
+                    rayleigh_curves = rayleigh_density(
+                        dpsi_fine[:, None],
+                        sigmas[None, :],
+                    )
+
+                if rayleigh_weighted:
+                    if weight_field is None:
+                        raise ValueError(
+                            "rayleigh_weighted=True requires weight_field, "
+                            "for example weight_field='ow' or 'oneweight'."
+                        )
+
+                    gamma = fit_parameters.get("spectral_indices", None)
+                    if gamma is not None:
+                        gamma = np.asarray(gamma)[gamma_idx]
+                    else:
+                        raise ValueError(
+                            "rayleigh_weighted=True requires "
+                            "fit_parameters['spectral_indices']."
+                        )
+
+                    weights = np.asarray(
+                        get_event_values(signal_events, weight_field)[event_mask],
+                        dtype=float,
+                    )
+                    true_energy = np.asarray(
+                        get_event_values(signal_events, true_energy_name)[event_mask],
+                        dtype=float,
+                    )
+
+                    weights = weights[valid_sigma]
+                    true_energy = true_energy[valid_sigma]
+
+                    weights = weights * true_energy ** (-gamma)
+                    weights = np.asarray(weights, dtype=float)
+
+                    valid_w = np.isfinite(weights) & (weights > 0)
+
+                    if np.any(valid_w):
+                        pdf_rayleigh = np.average(
+                            rayleigh_curves[:, valid_w],
+                            axis=1,
+                            weights=weights[valid_w],
+                        )
+                    else:
+                        pdf_rayleigh = np.nanmean(rayleigh_curves, axis=1)
+
+                else:
+                    pdf_rayleigh = np.nanmean(rayleigh_curves, axis=1)
+
+                if normalize_fit_to_hist:
+                    if np.nanmax(pdf_rayleigh) > 0:
+                        pdf_rayleigh *= np.nanmax(hist_plot) / np.nanmax(pdf_rayleigh)
+
+                ax.plot(
+                    np.degrees(dpsi_fine),
+                    pdf_rayleigh,
+                    "--",
+                    linewidth=2,
+                    label="Rayleigh ref.",
+                    color="red",
+                )
+
         title = f"α={np.degrees(alpha):.3f}°, β={beta:.2f}\n"
 
         for dim, name in enumerate(bin_names):
@@ -674,39 +930,33 @@ def plot_selected_fit_bins(
             low = edges[idx]
             high = edges[idx + 1]
 
-            if name in {"dec", "zen", "angErr"}:
+            if name in {"dec", "zen", "angErr", "sigma"}:
                 low = np.degrees(low)
                 high = np.degrees(high)
                 title += f"{name}=[{low:.2g}, {high:.2g}]° "
             else:
                 title += f"{name}=[{low:.2g}, {high:.2g}] "
-
-        ax.set_title(title, fontsize=9)
+        if show_data:
+            ax.set_title(title, fontsize=9)
         ax.set_xlabel("Angular Error (degrees)")
-        ax.set_ylabel("Normalized Density")
-        ax.set_yscale("log")
-        #ax.set_xscale("log")
+        ax.set_ylabel("Radial PDF" if plot_kind == "radial" else "Density")
+
+        if x_log:
+            ax.set_xscale("log")
+        if y_log:
+            ax.set_yscale("log")
+
         ax.grid(alpha=0.3)
-        ax.legend(fontsize=8)
         ax.set_xlim(0, 5)
-        ax.text(
-            0.5,
-            0.15,
-            f"{metric}={quality:.2f}",
-            transform=ax.transAxes,
-            va="top",
-            fontsize=10,
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.7),
-        )
-        ax.text(
-            0.2,
-            0.15,
-            f"#Events={event_counts[param_idx]}",
-            transform=ax.transAxes,
-            va="top",
-            fontsize=10,
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.7),
-        )
+
+        handles, labels = ax.get_legend_handles_labels()
+        if show_data:
+            handles.extend([
+                Line2D([], [], linestyle="none", label=f"{metric}: {quality:.4f}"),
+                Line2D([], [], linestyle="none", label=f"#Events: {event_counts[param_idx]}"),
+            ])
+
+        ax.legend(handles=handles, fontsize=8, framealpha=0.9)
 
     for ax in axes[len(selected_bins):]:
         ax.set_axis_off()
@@ -715,7 +965,6 @@ def plot_selected_fit_bins(
     plt.show()
 
     return selected_bins
-
 
 
 
