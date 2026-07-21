@@ -16,6 +16,7 @@ import json
 import numpy as np
 import argparse
 import inspect
+import pickle
 
 
 print("Python executable:", sys.executable)
@@ -78,12 +79,12 @@ dpsi_nbins = 101
 
 minimum_counts = args.min_counts
 # fixed bin edges in energy and declination but equal-p in sigma
-parametrization_bins = {
-    'log10energy':  np.array([2, 2.75, 3.5, 4.25, 5., 6.0]), #  energy bins from 100 GeV to 1 PeV
-    'dec': np.arcsin(np.linspace(-1, 1, 10)),  #   equal bins in sin_dec
-    'sigma': args.ang_err_bins
-    
-}
+parametrization_bins = {'log10energy': [ 2.  ,  2.5 ,  3.25,  4.25,  6.  , 10.  ], 
+                        'dec': [-1.57079633, -0.89112251, -0.58903098, -0.33983691, -0.11134101,
+        0.11134101,  0.33983691,  0.58903098,  0.89112251,  1.57079633], 
+                        'sigma': [0.00349066, 0.0047325 , 0.00650461, 0.00809006, 0.00976703,
+       0.01165397, 0.01386859, 0.01656322, 0.01997425, 0.02454972,
+       0.03131175, 0.0438294 , 1.1385913 ]}
 #####################################################################
 
 # Load analysis
@@ -275,7 +276,7 @@ if calc_sens:
         f"_N_{N_trials}_{file_identifier}.json"), "w") as f:
         json.dump(json_sens_dict, f)
         
-    #estimate discovery potential
+    """     #estimate discovery potential
     with time('ps discovery potential'):
         print(f'Estimating discovery potential for sin(dec) = {src_sin_dec}')
         disc: dict = tr.find_n_sig(
@@ -329,7 +330,27 @@ if calc_sens:
     json_3sig_dic_dict = to_jsonable(disc_3sig)
     with open(os.path.join(out_dir, f"TEST_king_3sig_disc_sindec_{src_sin_dec}"
         f"_N_{N_trials}_{file_identifier}.json"), "w") as f:
-        json.dump(json_3sig_dic_dict, f)
+        json.dump(json_3sig_dic_dict, f) """
+        
+    #test for bias
+    n_sigs = np.r_[:101:10]
+    trials = [get_many_fits_from_trials(tr = tr,
+                                    n_trials= 100, 
+                                    n_sig=n_sig, 
+                                    logging=True, 
+                                    mp_cpus = mp_cpus,
+                                    seed=int(n_sig)) for n_sig in n_sigs]
+        
+    #We add the true number of events injected for bookkeeping convenience:
+    for (n_sig, t) in zip(n_sigs, trials):
+        t['ntrue'] = np.repeat(n_sig, len(t))
+
+    #Concatenate the trial batches:
+    allt = cy.utils.Arrays.concatenate(trials)
+    with open(os.path.join(out_dir, f"king_bias_{src_sin_dec}"
+        f"_N_{N_trials}_{file_identifier}.json"), "wb") as f:
+        pickle.dump(allt, f)
+    
     
     
         
