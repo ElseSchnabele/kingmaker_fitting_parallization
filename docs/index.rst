@@ -24,6 +24,7 @@ spherical-harmonic convolution with HEALPix template maps.
    :caption: Contents
 
    installation
+   quickstart
    api
 
 .. toctree::
@@ -31,3 +32,4 @@ spherical-harmonic convolution with HEALPix template maps.
    :caption: Examples
 
    examples
+   signal_subtraction

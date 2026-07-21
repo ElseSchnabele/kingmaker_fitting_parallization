@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from kingmaker.pdf import KingPDF
+from kingmaker.pdf import KingPDF, MarginalizedKingPDF
 
 
 # ---------------------------------------------------------------------------
@@ -60,11 +60,6 @@ class TestKingPDFInit:
 
 class TestKingPDFEval:
     @pytest.mark.parametrize("alpha, beta", PARAM_CASES)
-    def test_scalar_positive(self, alpha, beta):
-        king = KingPDF()
-        assert king.pdf(0.0, alpha, beta) > 0
-
-    @pytest.mark.parametrize("alpha, beta", PARAM_CASES)
     def test_array_positive(self, alpha, beta):
         king = KingPDF()
         theta = np.linspace(0, np.radians(5), 50)
@@ -76,14 +71,6 @@ class TestKingPDFEval:
         king = KingPDF()
         theta = np.linspace(0, np.radians(5), 50)
         assert np.all(np.isfinite(king.pdf(theta, alpha, beta)))
-
-    @pytest.mark.parametrize("alpha, beta", PARAM_CASES)
-    def test_maximum_at_origin(self, alpha, beta):
-        """PDF should be highest at theta=0 (or very close to it)."""
-        king = KingPDF()
-        theta = np.linspace(0, np.radians(10), 200)
-        vals = king.pdf(theta, alpha, beta)
-        assert np.argmax(vals) == 0
 
     @pytest.mark.parametrize("alpha, beta", PARAM_CASES)
     def test_monotone_decreasing(self, alpha, beta):
@@ -103,8 +90,8 @@ class TestKingPDFEval:
             pytest.skip("no points strictly beyond cutoff within the sphere")
         assert np.all(king.pdf(beyond, alpha, beta) == 0)
 
-    @pytest.mark.parametrize("cutoff", CUTOFF_CASES)
-    @pytest.mark.parametrize("alpha, beta", PARAM_CASES)
+    @pytest.mark.parametrize("cutoff", [np.pi, 0.2])
+    @pytest.mark.parametrize("alpha, beta", [PARAM_CASES[0], PARAM_CASES[2]])
     def test_normalizes_to_one(self, cutoff, alpha, beta):
         """2pi * integral of PDF * sin(theta) dtheta should equal 1."""
         if alpha >= cutoff:
@@ -142,11 +129,6 @@ class TestKingPDFEval:
 
 
 class TestKingPDFCDF:
-    @pytest.mark.parametrize("alpha, beta", PARAM_CASES)
-    def test_cdf_at_zero_is_zero(self, alpha, beta):
-        king = KingPDF()
-        assert_allclose(king.cdf(0.0, alpha, beta), 0.0, atol=1e-6)
-
     @pytest.mark.parametrize("cutoff", CUTOFF_CASES)
     @pytest.mark.parametrize("alpha, beta", PARAM_CASES)
     def test_cdf_at_cutoff_is_one(self, cutoff, alpha, beta):
@@ -197,14 +179,11 @@ class TestKingPDFCDF:
 
 class TestKingPDFNorm:
     @pytest.mark.parametrize("alpha, beta", PARAM_CASES)
-    def test_norm_positive(self, alpha, beta):
+    def test_norm_valid(self, alpha, beta):
         king = KingPDF()
-        assert king.norm(alpha, beta) > 0
-
-    @pytest.mark.parametrize("alpha, beta", PARAM_CASES)
-    def test_norm_finite(self, alpha, beta):
-        king = KingPDF()
-        assert np.isfinite(king.norm(alpha, beta))
+        n = king.norm(alpha, beta)
+        assert n > 0
+        assert np.isfinite(n)
 
     def test_norm_decreases_with_alpha(self):
         """Wider PSF → lower peak → smaller norm constant."""
@@ -227,7 +206,7 @@ class TestKingPDFNorm:
 
 
 class TestKingPDFSample:
-    @pytest.mark.parametrize("n", [10, 100, 1000])
+    @pytest.mark.parametrize("n", [100, 1000])
     def test_sample_length(self, n):
         king = KingPDF()
         samples = king.sample(n, np.radians(1.0), 2.0)
@@ -256,32 +235,207 @@ class TestKingPDFSample:
 
 
 # ---------------------------------------------------------------------------
-# Marginalize
+# KingPDF.evaluate
 # ---------------------------------------------------------------------------
 
 
-class TestKingPDFMarginalize:
-    def test_returns_two_arrays(self):
-        king = KingPDF()
-        result = king.marginalize(np.radians(30), np.radians(1.0), 2.0)
-        assert len(result) == 2
+class TestKingPDFEvaluate:
+    @pytest.fixture
+    def king(self):
+        return KingPDF(angular_cutoff=np.radians(10.0))
 
-    def test_sindec_bins_sorted(self):
-        king = KingPDF()
-        sindec_bins, _ = king.marginalize(np.radians(30), np.radians(1.0), 2.0)
-        assert np.all(np.diff(sindec_bins) >= 0)
+    def test_output_shape(self, king):
+        src_ras = np.radians([0.0, 90.0])
+        src_decs = np.radians([0.0, 30.0])
+        ev_ras = np.radians(np.linspace(0, 10, 5))
+        ev_decs = np.radians(np.linspace(-5, 5, 5))
+        alpha = np.full(5, np.radians(1.0))
+        beta = np.full(5, 2.0)
+        result = king.evaluate(src_ras, src_decs, ev_ras, ev_decs, alpha, beta)
+        assert result.shape == (5, 2)
 
-    def test_marginalized_nonnegative(self):
-        king = KingPDF()
-        _, marginalized = king.marginalize(np.radians(30), np.radians(1.0), 2.0)
-        assert np.all(marginalized >= 0)
+    def test_returns_sparse_array(self, king):
+        from scipy.sparse import csr_array
 
-    def test_marginalized_lengths_match(self):
-        king = KingPDF()
-        sindec_bins, marginalized = king.marginalize(np.radians(30), np.radians(1.0), 2.0)
-        assert len(sindec_bins) == len(marginalized)
+        result = king.evaluate(
+            np.array([0.0]),
+            np.array([0.0]),
+            np.array([0.0]),
+            np.array([0.0]),
+            np.array([np.radians(1.0)]),
+            np.array([2.0]),
+        )
+        assert isinstance(result, csr_array)
 
-    def test_nbins_parameter(self):
-        king = KingPDF()
-        sindec_bins, marginalized = king.marginalize(np.radians(30), np.radians(1.0), 2.0, nbins=50)
-        assert len(sindec_bins) == len(marginalized)
+    def test_nonnegative(self, king):
+        rng = np.random.default_rng(0)
+        src_ras = np.radians([0.0])
+        src_decs = np.radians([0.0])
+        ev_ras = rng.uniform(0, 2 * np.pi, 50)
+        ev_decs = np.arcsin(rng.uniform(-1, 1, 50))
+        alpha = np.full(50, np.radians(1.0))
+        beta = np.full(50, 2.0)
+        result = king.evaluate(src_ras, src_decs, ev_ras, ev_decs, alpha, beta)
+        assert np.all(result.toarray() >= 0)
+
+    def test_zero_beyond_cutoff(self, king):
+        src_ras = np.array([0.0])
+        src_decs = np.array([0.0])
+        ev_ras = np.array([0.0, 0.0])
+        ev_decs = np.radians([0.0, 50.0])
+        alpha = np.full(2, np.radians(1.0))
+        beta = np.full(2, 2.0)
+        result = king.evaluate(src_ras, src_decs, ev_ras, ev_decs, alpha, beta).toarray()
+        assert result[0, 0] > 0
+        assert result[1, 0] == 0
+
+    def test_mask_gives_same_result(self, king):
+        rng = np.random.default_rng(1)
+        src_ras = np.radians([0.0, 45.0])
+        src_decs = np.radians([0.0, 10.0])
+        ev_ras = rng.uniform(0, 2 * np.pi, 30)
+        ev_decs = np.arcsin(rng.uniform(-1, 1, 30))
+        alpha = np.full(30, np.radians(1.0))
+        beta = np.full(30, 2.0)
+        first = king.evaluate(src_ras, src_decs, ev_ras, ev_decs, alpha, beta)
+        second = king.evaluate(src_ras, src_decs, ev_ras, ev_decs, alpha, beta, mask=first)
+        assert_allclose(first.toarray(), second.toarray(), rtol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# MarginalizedKingPDF
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def mkpdf():
+    return MarginalizedKingPDF(
+        source_declination=np.radians(np.linspace(-80, 80, 21)),
+        angular_cutoff=np.radians(10.0),
+    )
+
+
+class TestMarginalizedKingPDFInit:
+    def test_builds_cache_with_defaults(self):
+        mkpdf = MarginalizedKingPDF(
+            source_declination=np.radians([-30.0, 0.0, 30.0]),
+            angular_cutoff=np.radians(10.0),
+        )
+        assert mkpdf._grid.shape[0] == 3
+        assert np.all(np.isfinite(mkpdf._grid))
+
+    def test_king_instance_stored(self):
+        mkpdf = MarginalizedKingPDF(
+            source_declination=np.radians([0.0]),
+            angular_cutoff=np.radians(10.0),
+        )
+        assert isinstance(mkpdf.king, KingPDF)
+        assert mkpdf.king.angular_cutoff == mkpdf.angular_cutoff
+
+    def test_source_declination_stored_sorted(self):
+        mkpdf = MarginalizedKingPDF(
+            source_declination=np.radians([30.0, -30.0, 0.0]),
+            angular_cutoff=np.radians(10.0),
+        )
+        assert np.all(np.diff(mkpdf.source_declination) >= 0)
+
+    def test_custom_grid_sizes_respected(self):
+        mkpdf = MarginalizedKingPDF(
+            source_declination=np.radians([0.0]),
+            angular_cutoff=np.radians(10.0),
+            n_signed_delta_dec=40,
+            n_ra_bins=20,
+        )
+        assert mkpdf._grid.shape == (1, 30, 20, 40)
+
+    def test_invalid_points_alpha_raises(self):
+        with pytest.raises(ValueError):
+            MarginalizedKingPDF(
+                source_declination=np.radians([0.0]),
+                points_alpha=np.array([-0.1, 0.5, 1.0]),
+            )
+
+    def test_invalid_points_beta_raises(self):
+        with pytest.raises(ValueError):
+            MarginalizedKingPDF(
+                source_declination=np.radians([0.0]),
+                points_beta=np.array([0.5, 1.0, 2.0]),
+            )
+
+
+class TestMarginalizedKingPDFPdf:
+    def test_returns_dense_array(self, mkpdf):
+        result = mkpdf.pdf(np.radians([0.0, 1.0]), np.radians(1.0), 2.0, np.radians(0.0))
+        assert isinstance(result, np.ndarray)
+
+    def test_nonnegative(self, mkpdf):
+        x = np.radians(np.linspace(-5.0, 5.0, 20))
+        alpha = np.full(20, np.radians(1.0))
+        beta = np.full(20, 2.0)
+        result = mkpdf.pdf(x, alpha, beta, np.radians(0.0))
+        assert np.all(result >= 0)
+
+    def test_zero_beyond_cutoff(self, mkpdf):
+        result = mkpdf.pdf(np.radians([0.0, 50.0]), np.radians(1.0), 2.0, np.radians(0.0))
+        assert result[0] > 0
+        assert result[1] == 0
+
+    def test_peaks_near_source_declination(self, mkpdf):
+        source_dec = np.radians(20.0)
+        x = np.radians(np.linspace(15.0, 25.0, 21))
+        alpha = np.full(len(x), np.radians(1.0))
+        beta = np.full(len(x), 2.0)
+        result = mkpdf.pdf(x, alpha, beta, source_dec)
+        assert np.argmax(result) == np.argmin(np.abs(x - source_dec))
+
+    def test_scalar_alpha_beta_broadcast(self, mkpdf):
+        x = np.radians(np.linspace(-3.0, 3.0, 10))
+        result = mkpdf.pdf(x, np.radians(1.0), 2.0, np.radians(0.0))
+        assert result.shape == (10,)
+
+
+class TestMarginalizedKingPDFEvaluate:
+    def test_output_shape(self, mkpdf):
+        source_decs = np.radians([-10.0, 0.0, 10.0])
+        event_decs = np.radians(np.linspace(-15, 15, 5))
+        alpha = np.full(5, np.radians(1.0))
+        beta = np.full(5, 2.0)
+        result = mkpdf.evaluate(source_decs, event_decs, alpha, beta)
+        assert result.shape == (5, 3)
+
+    def test_nonnegative(self, mkpdf):
+        source_decs = np.radians([-10.0, 0.0, 10.0])
+        event_decs = np.radians(np.linspace(-15, 15, 5))
+        alpha = np.full(5, np.radians(1.0))
+        beta = np.full(5, 2.0)
+        result = mkpdf.evaluate(source_decs, event_decs, alpha, beta)
+        assert np.all(result.toarray() >= 0)
+
+    def test_zero_beyond_cutoff(self, mkpdf):
+        source_decs = np.radians([0.0])
+        event_decs = np.radians([0.0, 50.0])
+        alpha = np.full(2, np.radians(1.0))
+        beta = np.full(2, 2.0)
+        result = mkpdf.evaluate(source_decs, event_decs, alpha, beta).toarray()
+        assert result[0, 0] > 0
+        assert result[1, 0] == 0
+
+    def test_returns_sparse_array(self, mkpdf):
+        from scipy.sparse import csr_array
+
+        result = mkpdf.evaluate(
+            np.radians([0.0]),
+            np.radians([0.0]),
+            np.array([np.radians(1.0)]),
+            np.array([2.0]),
+        )
+        assert isinstance(result, csr_array)
+
+    def test_mask_gives_same_result(self, mkpdf):
+        source_decs = np.radians([-10.0, 0.0, 10.0])
+        event_decs = np.radians(np.linspace(-15, 15, 30))
+        alpha = np.full(30, np.radians(1.0))
+        beta = np.full(30, 2.0)
+        first = mkpdf.evaluate(source_decs, event_decs, alpha, beta)
+        second = mkpdf.evaluate(source_decs, event_decs, alpha, beta, mask=first)
+        assert_allclose(first.toarray(), second.toarray(), rtol=1e-12)

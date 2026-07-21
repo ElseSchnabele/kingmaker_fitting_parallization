@@ -4,6 +4,7 @@ import numpy as np
 import numpy.typing as npt
 from scipy.optimize import minimize
 
+from .distribution import _cdf_and_gradient
 from .pdf import KingPDF
 from .utils import angular_distance
 
@@ -122,6 +123,19 @@ class KingPSFFitter:
         # Bin events
         self.event_indices = self._bin_events()
 
+        # Pre-group events by flat bin index for O(1) per-bin lookup in fit_all_bins.
+        # Replaces the per-iteration boolean-mask construction over all events.
+        _shape = tuple(self.parametrization_shape)
+        _idx_arrays = [
+            np.clip(self.event_indices[k], 1, s) - 1  # 0-based, clipped in-range
+            for k, s in zip(self.bin_names, _shape)
+        ]
+        _flat = np.ravel_multi_index(_idx_arrays, _shape)
+        self._event_sort_order = np.argsort(_flat, kind="stable")
+        _sorted_flat = _flat[self._event_sort_order]
+        _n_bins = int(np.prod(_shape))
+        self._bin_boundaries = np.searchsorted(_sorted_flat, np.arange(_n_bins + 1))
+
         # Initialize storage arrays
         self._initialize_storage()
 
@@ -142,7 +156,10 @@ class KingPSFFitter:
             If required fields are missing.
         """
         required_fields = ["ra", "dec", self.true_ra_name, self.true_dec_name]
-        names = self.signal_events.dtype.names or ()
+        if hasattr(self.signal_events, "dtype"):
+            names = self.signal_events.dtype.names or ()
+        else:
+            names = self.signal_events.keys()
         missing_required = [f for f in required_fields if f not in names]
         if missing_required:
             raise ValueError(f"Signal events missing required fields: {missing_required}")
@@ -309,22 +326,21 @@ class KingPSFFitter:
 
             total_bins = np.prod(self.parametrization_shape)
             for bin_indices in tqdm(np.ndindex(*self.parametrization_shape), total=total_bins):
-                # Create mask for events in this bin
-                mask = np.ones(len(weights), dtype=bool)
-                for i, key in enumerate(self.bin_names):
-                    # bin_indices are 0-based, but digitize returns 1-based
-                    mask &= self.event_indices[key] == bin_indices[i] + 1
+                flat_idx = int(np.ravel_multi_index(bin_indices, tuple(self.parametrization_shape)))
+                event_idx = self._event_sort_order[
+                    self._bin_boundaries[flat_idx] : self._bin_boundaries[flat_idx + 1]
+                ]
 
-                if self.remove_weight_outliers:
-                    masked_weights = weights[mask]
+                if self.remove_weight_outliers and len(event_idx) > 0:
+                    bin_weights = weights[event_idx]
                     idx_range = [
-                        int(len(masked_weights) * self.weight_outlier_percentiles[0] / 100),
-                        int(len(masked_weights) * self.weight_outlier_percentiles[1] / 100),
+                        int(len(bin_weights) * self.weight_outlier_percentiles[0] / 100),
+                        int(len(bin_weights) * self.weight_outlier_percentiles[1] / 100),
                     ]
-                    idx = np.digitize(masked_weights, np.unique(masked_weights))
-                    mask[mask] &= (idx_range[0] <= idx) & (idx <= idx_range[1])
+                    idx = np.digitize(bin_weights, np.unique(bin_weights))
+                    event_idx = event_idx[(idx_range[0] <= idx) & (idx <= idx_range[1])]
 
-                n_events = mask.sum()
+                n_events = len(event_idx)
                 param_idx = tuple([g_idx] + list(bin_indices))
                 self.event_counts[param_idx] = n_events
 
@@ -334,7 +350,7 @@ class KingPSFFitter:
                     continue
 
                 # Fit this bin
-                success = self._fit_single_bin(mask, weights, param_idx)
+                success = self._fit_single_bin(event_idx, weights, param_idx)
                 if success:
                     n_fitted += 1
                 else:
@@ -358,18 +374,37 @@ class KingPSFFitter:
         }
 
     def _cdf_chi2(self, cdf_hist, cdf_variance, bins, alpha, beta):
-        expected = self.king_pdf.cdf(bins[1:], alpha, beta)
-        expected *= cdf_hist.max() / expected.max()
-        val = (cdf_hist - expected) ** 2 / np.nextafter(cdf_variance, np.inf)
-        #var = np.maximum(cdf_variance, 1e-4)
-        #val = (cdf_hist - expected) ** 2 / var
-        if np.any(~np.isfinite(val)):
-            val[:] = 100000
-        return val.sum() / len(bins)
+        try:
+            cdf, grad_alpha, grad_beta = _cdf_and_gradient(
+                bins[1:], alpha, beta, self.angular_cutoff
+            )
+        except ZeroDivisionError:
+            return 100000.0, np.zeros(2)
+
+        scale = cdf_hist[-1] / cdf[-1]
+        expected = scale * cdf
+        residuals = cdf_hist - expected
+        inv_variance = 1.0 / np.nextafter(cdf_variance, np.inf)
+
+        n_bins = len(bins)
+        val = np.sum(residuals**2 * inv_variance) / n_bins
+        if not np.isfinite(val):
+            return 100000.0, np.zeros(2)
+
+        # d(chi2)/dtheta = (-2*scale/n_bins) * sum(r/var * (dCDF - (cdf/cdf_last)*dCDF_last))
+        weighted_residuals = residuals * inv_variance
+        cdf_ratio = cdf / cdf[-1]
+        grad = (-2.0 * scale / n_bins) * np.array(
+            [
+                np.sum(weighted_residuals * (grad_alpha - cdf_ratio * grad_alpha[-1])),
+                np.sum(weighted_residuals * (grad_beta - cdf_ratio * grad_beta[-1])),
+            ]
+        )
+        return val, grad
 
     def _fit_single_bin(
         self,
-        mask: npt.NDArray[np.bool_],
+        event_idx: npt.NDArray[np.intp],
         weights: npt.NDArray[np.floating],
         param_idx: Tuple[int, ...],
     ) -> bool:
@@ -378,8 +413,8 @@ class KingPSFFitter:
 
         Parameters
         ----------
-        mask : ndarray
-            Boolean mask selecting events in this bin.
+        event_idx : ndarray
+            Integer indices of events in this bin.
         weights : ndarray
             Event weights.
         param_idx : tuple
@@ -391,8 +426,8 @@ class KingPSFFitter:
             True if fit succeeded, False otherwise.
         """
         # Extract events in this bin
-        masked_dpsi = self.dpsi[mask]
-        masked_weights = weights[mask]
+        masked_dpsi = self.dpsi[event_idx]
+        masked_weights = weights[event_idx]
         masked_weights /= masked_weights.sum()  # Normalize
 
         # Create bins for this subset. Also calculate the
@@ -417,24 +452,39 @@ class KingPSFFitter:
         cdf_variance = np.cumsum(hist2) / np.sum(hist) ** 2
 
         # Get initial guess from peak location.
-        # alpha_guess = bin_centers[np.argmax(hist)]
         alpha_guess = bin_centers[np.searchsorted(cdf_hist, 0.5)]
-        best_params = None
-        best_chi2 = np.inf
-        for beta in [1.25, 1.75, 2, 2.5, 4, 7, 9]:
-            result = minimize(
-                lambda params: self._cdf_chi2(cdf_hist, cdf_variance, dpsi_bins, *params),
-                [alpha_guess, beta],
-                method="L-BFGS-B",
-                jac="3-point",
-                bounds=[
-                    (np.nextafter(0, np.pi), np.nextafter(self.angular_cutoff, 0)),
-                    (np.nextafter(1, 2), np.nextafter(1000, 1)),
-                ],
-            )
+        beta_guess = 2
+        result = minimize(
+            lambda params: self._cdf_chi2(cdf_hist, cdf_variance, dpsi_bins, *params),
+            [alpha_guess, beta_guess],
+            method="L-BFGS-B",
+            jac=True,
+            bounds=[
+                (np.nextafter(1e-4, np.pi), np.nextafter(self.angular_cutoff, 0)),
+                (1.01, 1000),
+            ],
+        )
 
-            if result.success and (best_chi2 > result.fun):
-                best_params, best_chi2 = result.x, result.fun
+        # If the fit doesn't succeed, try manually seeding with other beta values.
+        if not result.success:
+            best = None
+            for beta in [1.25, 1.75, 2, 2.5, 4, 7, 9]:
+                result = minimize(
+                    lambda params: self._cdf_chi2(cdf_hist, cdf_variance, dpsi_bins, *params),
+                    [alpha_guess, beta],
+                    method="L-BFGS-B",
+                    jac=True,
+                    bounds=[
+                        (np.nextafter(1e-4, np.pi), np.nextafter(self.angular_cutoff, 0)),
+                        (1.01, 1000),
+                    ],
+                )
+
+                if result.success:
+                    if (best is None) or (best.fun > result.fun):
+                        best = result
+
+            result = best
 
         # Store histogram data (pad/truncate to match storage size).
         # Make sure to rescale by the phase space to get densities.
@@ -444,10 +494,10 @@ class KingPSFFitter:
         self.dpsi_bins[param_idx][: len(dpsi_bins)] = dpsi_bins
 
         # Store results if we found a solution
-        if best_params is not None:
-            self.fit_alpha[param_idx] = best_params[0]
-            self.fit_beta[param_idx] = best_params[1]
-            self.fit_quality[param_idx] = best_chi2
+        if result.success:
+            self.fit_alpha[param_idx] = result.x[0]
+            self.fit_beta[param_idx] = result.x[1]
+            self.fit_quality[param_idx] = result.fun
             return True
 
         return False
