@@ -304,6 +304,7 @@ def plot_grid_fit_2d(
     hidden_slices: Optional[dict] = None,
     minimum_counts: int = 100,
     figsize: Tuple[float, float] = (10, 6),
+    
 ):
     parametrization_bins = fit_parameters["parametrization_bins"]
 
@@ -613,7 +614,9 @@ def plot_selected_fit_bins(
     rayleigh_weighted: bool = False,
     weight_field: Optional[str] = None,
     true_energy_name: str = "true_energy",
-    show_data : bool = True
+    show_data : bool = True,
+    selected_bin_idx: Optional[Tuple[int, int, int]] = None,
+    x_lim: Optional[float] = 3.0
 ):
     """
     Plot selected stored King fits and optionally overlay the corresponding
@@ -670,7 +673,67 @@ def plot_selected_fit_bins(
     event_counts = fit_parameters["event_counts"]
 
     good_bins = []
+    if selected_bin_idx is not None:
+        selected_bin_idx = tuple(selected_bin_idx)
 
+        if len(selected_bin_idx) != len(bin_names):
+            raise ValueError(
+                f"selected_bin_idx must have length {len(bin_names)} "
+                f"for dimensions {bin_names}, got {len(selected_bin_idx)}."
+            )
+
+        param_idx = (gamma_idx,) + selected_bin_idx
+
+        if not np.all(np.asarray(selected_bin_idx) >= 0):
+            raise ValueError(f"selected_bin_idx must be non-negative, got {selected_bin_idx}.")
+
+        if any(i >= s for i, s in zip(selected_bin_idx, fit_alpha[gamma_idx].shape)):
+            raise ValueError(
+                f"selected_bin_idx {selected_bin_idx} out of range for "
+                f"shape {fit_alpha[gamma_idx].shape}."
+            )
+
+        if event_counts[param_idx] < minimum_counts:
+            raise RuntimeError(
+                f"Selected bin {selected_bin_idx} has only "
+                f"{event_counts[param_idx]} events "
+                f"(minimum_counts={minimum_counts})."
+            )
+
+        if not np.any(histograms[param_idx] > 0):
+            raise RuntimeError(f"Selected bin {selected_bin_idx} has no histogram entries.")
+
+        if metric == "CDF_chi2":
+            selected_quality = fit_quality[param_idx]
+        else:
+            if metric == "CDF_RMS":
+                func = cdf_rms
+            elif metric == "CDF_root_median_squared":
+                func = cdf_root_median_squared
+            elif metric == "CDF_weighted_rms":
+                func = weighted_cdf_rms
+            elif metric == "CDF_density_weighted_rms":
+                func = density_weighted_cdf_rms
+            elif metric == "PDF_RMS":
+                func = pdf_rms
+            elif metric == "PDF_root_median_squared":
+                func = pdf_root_median_squared
+            elif metric == "PDF_weighted_rms":
+                func = weighted_pdf_rms
+            elif metric == "PDF_density_weighted_rms":
+                func = density_weighted_pdf_rms
+            else:
+                raise ValueError(f"Unknown metric: {metric}")
+
+            selected_quality = func(
+                fit_parameters=fit_parameters,
+                gamma_idx=gamma_idx,
+                minimum_counts=minimum_counts,
+                king_pdf=king_pdf,
+            )[param_idx]
+
+        selected_bins = [(selected_bin_idx, selected_quality)]
+        
     for bin_idx in np.ndindex(*fit_alpha[gamma_idx].shape):
         param_idx = (gamma_idx,) + bin_idx
 
@@ -712,52 +775,52 @@ def plot_selected_fit_bins(
 
     if len(good_bins) == 0:
         raise RuntimeError("No valid fitted bins found.")
+    if selected_bin_idx is None:
+        if mode == "best":
+            selected_bins = sorted(good_bins, key=lambda x: x[1])[:n_plots]
 
-    if mode == "best":
-        selected_bins = sorted(good_bins, key=lambda x: x[1])[:n_plots]
+        elif mode == "worst":
+            selected_bins = sorted(good_bins, key=lambda x: x[1], reverse=True)[:n_plots]
 
-    elif mode == "worst":
-        selected_bins = sorted(good_bins, key=lambda x: x[1], reverse=True)[:n_plots]
+        elif mode == "random":
+            rng = np.random.default_rng(random_seed)
+            indices = rng.choice(
+                len(good_bins),
+                size=min(n_plots, len(good_bins)),
+                replace=False,
+            )
+            selected_bins = [good_bins[i] for i in indices]
 
-    elif mode == "random":
-        rng = np.random.default_rng(random_seed)
-        indices = rng.choice(
-            len(good_bins),
-            size=min(n_plots, len(good_bins)),
-            replace=False,
-        )
-        selected_bins = [good_bins[i] for i in indices]
+        elif mode == "grid":
+            good_bin_indices = np.asarray([b[0] for b in good_bins])
+            good_quality = np.asarray([b[1] for b in good_bins])
 
-    elif mode == "grid":
-        good_bin_indices = np.asarray([b[0] for b in good_bins])
-        good_quality = np.asarray([b[1] for b in good_bins])
+            n_select = min(n_plots, len(good_bins))
 
-        n_select = min(n_plots, len(good_bins))
+            shape = np.asarray(fit_alpha[gamma_idx].shape)
+            denom = np.maximum(shape - 1, 1)
+            good_pos = good_bin_indices / denom
 
-        shape = np.asarray(fit_alpha[gamma_idx].shape)
-        denom = np.maximum(shape - 1, 1)
-        good_pos = good_bin_indices / denom
+            targets_1d = np.linspace(0, 1, n_select)
+            target_pos = np.repeat(targets_1d[:, None], good_pos.shape[1], axis=1)
 
-        targets_1d = np.linspace(0, 1, n_select)
-        target_pos = np.repeat(targets_1d[:, None], good_pos.shape[1], axis=1)
+            selected_bins = []
+            used = set()
 
-        selected_bins = []
-        used = set()
+            for target in target_pos:
+                distances = np.linalg.norm(good_pos - target, axis=1)
 
-        for target in target_pos:
-            distances = np.linalg.norm(good_pos - target, axis=1)
+                for idx in np.argsort(distances):
+                    bin_tuple = tuple(good_bin_indices[idx])
+                    if bin_tuple not in used:
+                        selected_bins.append((bin_tuple, good_quality[idx]))
+                        used.add(bin_tuple)
+                        break
 
-            for idx in np.argsort(distances):
-                bin_tuple = tuple(good_bin_indices[idx])
-                if bin_tuple not in used:
-                    selected_bins.append((bin_tuple, good_quality[idx]))
-                    used.add(bin_tuple)
-                    break
+        else:
+            raise ValueError("mode must be one of: 'best', 'worst', 'random', 'grid'")
 
-    else:
-        raise ValueError("mode must be one of: 'best', 'worst', 'random', 'grid'")
-
-    n_cols = min(3, n_plots)
+    n_cols = 1 if selected_bin_idx is not None else min(3, n_plots)
     n_rows = int(np.ceil(len(selected_bins) / n_cols))
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
@@ -797,7 +860,9 @@ def plot_selected_fit_bins(
 
         valid_edges = bins[: np.sum(mask) + 1]
         dpsi_max = valid_edges[-1]
-        dpsi_fine = np.linspace(0, dpsi_max, 1000)
+        eps = 1e-6  # radians
+        dpsi_fine = np.geomspace(eps, dpsi_max, 1000)
+        dpsi_fine = np.insert(dpsi_fine, 0, 0.0)
 
         if plot_kind == "radial":
             jac_hist = 2 * np.pi * np.sin(bin_centers)
@@ -918,7 +983,7 @@ def plot_selected_fit_bins(
                     pdf_rayleigh,
                     "--",
                     linewidth=2,
-                    label="Rayleigh ref.",
+                    label="Rayleigh",
                     color="red",
                 )
 
@@ -939,7 +1004,7 @@ def plot_selected_fit_bins(
         if show_data:
             ax.set_title(title, fontsize=9)
         ax.set_xlabel("Angular Error (degrees)")
-        ax.set_ylabel("Radial PDF" if plot_kind == "radial" else "Density")
+        ax.set_ylabel("PDF" if plot_kind == "radial" else "Density")
 
         if x_log:
             ax.set_xscale("log")
@@ -947,7 +1012,7 @@ def plot_selected_fit_bins(
             ax.set_yscale("log")
 
         ax.grid(alpha=0.3)
-        ax.set_xlim(0, 5)
+        ax.set_xlim(0, x_lim)
 
         handles, labels = ax.get_legend_handles_labels()
         if show_data:

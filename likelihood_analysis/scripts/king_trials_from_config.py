@@ -15,6 +15,7 @@ import os
 import json
 import numpy as np
 import argparse
+import pickle
 import inspect
 
 
@@ -85,9 +86,20 @@ parametrization_bins = {}
 #build parametrization bins
 for key, value in bins_cfg.items():
     if key == "dec_sindec_edges":
-        parametrization_bins["dec"] = np.arcsin(np.asarray(value, dtype=float))
-    elif isinstance(value, list):
-        parametrization_bins[key] = np.asarray(value, dtype=float)
+        if isinstance(value, int):
+            parametrization_bins["dec"] = value
+        else:
+            parametrization_bins["dec"] = np.arcsin(np.asarray(value, dtype=float))
+
+    elif key == "log10energy": 
+        if isinstance(value, int):
+            parametrization_bins["log10energy"] = value
+        else:
+            parametrization_bins["log10energy"] = np.asarray(value, dtype=float)
+
+    elif key == "sigma":
+        parametrization_bins["sigma"] = int(value)
+
     else:
         parametrization_bins[key] = value
 ################### NOTE: some fixed parameters: ###################
@@ -312,7 +324,7 @@ if calc_sens:
         f"_N_{N_trials}_{file_identifier}.json"), "w") as f:
         json.dump(json_sens_dict, f)
         
-    #estimate discovery potential
+    """ #estimate discovery potential
     with time('ps discovery potential'):
         print(f'Estimating discovery potential for sin(dec) = {src_sin_dec}')
         disc: dict = tr.find_n_sig(
@@ -339,7 +351,7 @@ if calc_sens:
     with open(os.path.join(out_dir, f"TEST_king_disc_sindec_{src_sin_dec}"
         f"_N_{N_trials}_{file_identifier}.json"), "w") as f:
         json.dump(json_disc_dict, f)
-        
+    """   
     #estimate 3 sigma discovery potential
     with time('ps 3 sigma discovery potential'):
         print(f'Estimating 3 sigma discovery potential for sin(dec) = {src_sin_dec}')
@@ -366,7 +378,25 @@ if calc_sens:
     json_3sig_dic_dict = to_jsonable(disc_3sig)
     with open(os.path.join(out_dir, f"TEST_king_3sig_disc_sindec_{src_sin_dec}"
         f"_N_{N_trials}_{file_identifier}.json"), "w") as f:
-        json.dump(json_3sig_dic_dict, f)
+        json.dump(json_3sig_dic_dict, f) 
+    #test for bias
+    n_sigs = np.r_[:101:10]
+    trials = [get_many_fits_from_trials(tr = tr,
+                                    n_trials= 100, 
+                                    n_sig=n_sig, 
+                                    logging=True, 
+                                    mp_cpus = mp_cpus,
+                                    seed=int(n_sig)) for n_sig in n_sigs]
+        
+    #We add the true number of events injected for bookkeeping convenience:
+    for (n_sig, t) in zip(n_sigs, trials):
+        t['ntrue'] = np.repeat(n_sig, len(t))
+
+    #Concatenate the trial batches:
+    allt = cy.utils.Arrays.concatenate(trials)
+    with open(os.path.join(out_dir, f"king_bias_{src_sin_dec}"
+        f"_N_{N_trials}_{file_identifier}.json"), "wb") as f:
+        pickle.dump(allt, f)
     
         
 ### Diagnostics Block ###

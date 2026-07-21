@@ -4,7 +4,7 @@ arguments = --sin_dec $(SINDEC) \
             --N_trials $(NTRIALS) \
             --seed 0 \
             --mp_cpus 32 \
-            --gammas 1.8 2.0 2.5 2.7 3.0 3.2 \
+            --gammas 1.0 1.7 2.0 2.3 2.5 2.7 3.0 3.3 4.0 \
             --out_dir /data/user/fkrafft/csky_king_tests/$(FILE_ID) \
             --ana_dir /data/user/fkrafft/csky_gfu_tests \
             --file_identifier $(FILE_ID) \
@@ -25,36 +25,7 @@ request_cpus = 32
 request_memory = 8GB
 
 queue SINDEC, ANGERRBINS, MINCOUNTS, NTRIALS, SIGNAL_INJ_GAMMA, FILE_ID, from (
--0.5 12 150 1000 2.0 min_count_150_angErr12_gamma_2.0
--0.3 12 150 1000 2.0 min_count_150_angErr12_gamma_2.0
--0.15 12 150 1000 2.0 min_count_150_angErr12_gamma_2.0
--0.1 12 150 1000 2.0 min_count_150_angErr12_gamma_2.0
--0.05 12 150 1000 2.0 min_count_150_angErr12_gamma_2.0
-0.0 12 150 1000 2.0 min_count_150_angErr12_gamma_2.0
-0.2 12 150 1000 2.0 min_count_150_angErr12_gamma_2.0
-0.4 12 150 1000 2.0 min_count_150_angErr12_gamma_2.0
--0.5 12 150 1000 2.5 min_count_150_angErr12_gamma_2.5
--0.3 12 150 1000 2.5 min_count_150_angErr12_gamma_2.5
--0.15 12 150 1000 2.5 min_count_150_angErr12_gamma_2.5
--0.1 12 150 1000 2.5 min_count_150_angErr12_gamma_2.5
--0.05 12 150 1000 2.5 min_count_150_angErr12_gamma_2.5
-0.0 12 150 1000 2.5 min_count_150_angErr12_gamma_2.5
-0.2 12 150 1000 2.5 min_count_150_angErr12_gamma_2.5
-0.4 12 150 1000 2.5 min_count_150_angErr12_gamma_2.5
--0.5 12 150 1000 2.7 min_count_150_angErr12_gamma_2.7
--0.3 12 150 1000 2.7 min_count_150_angErr12_gamma_2.7
--0.15 12 150 1000 2.7 min_count_150_angErr12_gamma_2.7
--0.1 12 150 1000 2.7 min_count_150_angErr12_gamma_2.7
--0.05 12 150 1000 2.7 min_count_150_angErr12_gamma_2.7
-0.0 12 150 1000 2.7 min_count_150_angErr12_gamma_2.7
-0.2 12 150 1000 2.7 min_count_150_angErr12_gamma_2.7
-0.4 12 150 1000 2.7 min_count_150_angErr12_gamma_2.7
--0.5 12 150 1000 3.0 min_count_150_angErr12_gamma_3.0
--0.3 12 150 1000 3.0 min_count_150_angErr12_gamma_3.0
--0.15 12 150 1000 3.0 min_count_150_angErr12_gamma_3.0
--0.1 12 150 1000 3.0 min_count_150_angErr12_gamma_3.0
--0.05 12 150 1000 3.0 min_count_150_angErr12_gamma_3.0
-0.0 12 150 1000 3.0 min_count_150_angErr12_gamma_3.0
-0.2 12 150 1000 3.0 min_count_150_angErr12_gamma_3.0
-0.4 12 150 1000 3.0 min_count_150_angErr12_gamma_3.0
+-0.5 12 300 1000 2.5 E5_a36baa_D9_83b58e_S12_MC300_PST_energy_bins_ext_gamma_range
+-0.1 12 300 1000 2.5 E5_a36baa_D9_83b58e_S12_MC300_PST_energy_bins_ext_gamma_range
+0.4 12 300 1000 2.5 E5_a36baa_D9_83b58e_S12_MC300_PST_energy_bins_ext_gamma_range
 )
