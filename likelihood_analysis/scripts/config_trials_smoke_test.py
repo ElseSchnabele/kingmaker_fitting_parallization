@@ -36,34 +36,18 @@ from csky.utils import Arrays
 timer = cy.timing.Timer()
 time = timer.time
 
-# Cache arguments
-parser = argparse.ArgumentParser()
-parser.add_argument("--seed", type = int, default = 0, help = 'trial seed')
-parser.add_argument("--mp_cpus", type = int, default = 2, help = 'number of CPUs to assign for multiprocessing')
-parser.add_argument("--calc_sens", type = int, default = 1, help = 'Flag for running sensitivity and discovery potential estimation')
+ana_dir = cy.utils.ensure_dir('/data/user/fkrafft/updated_king_bias')
+seed = 0
+mp_cpus = 16
+calc_sens = bool(1)
+N_trials = 1000
+candidate_id = 'E8_b26d8e_D4_fc5cd0_S15_MC300'
+out_dir = os.path.join(ana_dir, candidate_id)
+if not os.path.exists(out_dir):
+    os.mkdir(os.path.join(out_dir, 'log'))
 
-parser.add_argument("--N_trials", type = int, default = 1000, help = 'number of trials to run')
-# king fits will cached and loaded automatically if simulation already exists 
-parser.add_argument("--out_dir", type = str )
-parser.add_argument("--config_dir", type = str )
-parser.add_argument("--ana_dir", type = str )
-parser.add_argument("--candidate_id", type = str )
-parser.add_argument("--sin_dec", type = float)
-
-
-args = parser.parse_args()
-
-ana_dir = cy.utils.ensure_dir(args.ana_dir)
-seed = args.seed
-mp_cpus = args.mp_cpus
-calc_sens = bool(args.calc_sens)
-N_trials = args.N_trials
-out_dir = args.out_dir
-os.makedirs(os.path.join(out_dir, "log"), exist_ok=True)
-
-candidate_id = args.candidate_id
-src_sin_dec = args.sin_dec 
-config_dir = args.config_dir
+src_sin_dec = 0.0
+config_dir = '/home/fkrafft/kingmaker_fork/likelihood_analysis/scripts/bias_candidate_selection.json'
 
 
 file_identifier = f"SINDEC_{src_sin_dec}_NTRIALS_{N_trials}_{candidate_id}"
@@ -71,8 +55,9 @@ file_identifier = f"SINDEC_{src_sin_dec}_NTRIALS_{N_trials}_{candidate_id}"
 
 with open(config_dir, "r") as f:
             config= json.load(f)
+candidate_dir = os.path.join(out_dir, candidate_id)
+os.makedirs(candidate_dir, exist_ok=True)
 
-################### NOTE: Config parameters: ###################
 for c in config["candidates"]:
         if c["id"] == candidate_id:
             candidate = c
@@ -100,6 +85,8 @@ for key, value in bins_cfg.items():
 
     else:
         parametrization_bins[key] = value
+################### NOTE: some fixed parameters: ###################
+#SHOULD NOT BE CHANGED AS NOT INCODED IN IDENTIFIER: RISK OVERWRITE!!!  
 
 # load spectral indices
 spectral_indices= np.asarray(config["spectral_indices"])
@@ -135,6 +122,7 @@ for name in ["root", "local_root", "remote_root", "base_dir", "dir"]:
 
 with time('ana setup (from cache-to-disk)'):
     ana = cy.get_analysis(repo, 'version-001-p09' , custom_gfu.gfu_19_to_23, dir = ana_dir)
+    ana.save(ana_dir)
 
 fit_cache_filename = f"king_fit_custom_gfu_{file_identifier}.npz"
 
@@ -153,6 +141,33 @@ king_wrapper = KingSpatialLikelihood(
                                     true_energy_name = true_energy_name,
                                     angular_cutoff = np.radians(angular_cutoff_deg),
                                        )
+
+def king_func(ra, dec, sigma, energy, src, pdf_bg, gamma, **kwargs):
+    ev = Arrays({
+        "ra": ra,
+        "dec": dec,
+        "sigma": sigma,
+        "energy": energy,
+        "log10energy": np.log10(energy),
+        "sindec": np.sin(dec),
+        "trueRa": ra,
+        "trueDec": dec,
+        "trueE": energy,
+    })
+
+    king_wrapper.set_events(
+        events=ev,
+        source_ras=src.ra,
+        source_decs=src.dec,
+    )
+
+    out = king_wrapper.evaluate_pdf(events=ev, gamma=gamma)
+    out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
+    out[out < 0] = 0.0
+
+    out = out / pdf_bg
+
+    return out
 
 features = {
     "ra": "ra",
@@ -189,8 +204,21 @@ tr: cy.trial.TrialRunner = cy.get_trial_runner(ana = ana,
                          king_params = king_params,
                          window_dist = king_params.get("angular_cutoff", np.pi),
                          circle_cut = False,
-                         use_bdt = False
                          )
+""" tr: cy.trial.TrialRunner = cy.get_trial_runner(ana = ana,
+                        src = srcs,
+                        mp_cpus = mp_cpus,
+                        use_bdt = True,
+                        flux = cy.hyp.PowerLawFlux(signal_injection_gamma),
+                        use_all_ev = True,
+                        use_pdf_bg = True,
+                        space = 'generic',
+                        func = king_func,
+                        features = features,
+                        fits = fits,
+                        extra_keep = ["dec", "ra", "sigma", "sindec", "event", "energy"],
+                        cut_n_sigma = np.inf,
+                        ) """
 
 config_path = os.path.join(
     out_dir,
@@ -217,123 +245,116 @@ save_king_trial_runner_config(
 # Run and save trials per declination
 bg_trials = []
 
-bg_dir = cy.utils.ensure_dir(out_dir)
 
-bg_file = (
-    f"{bg_dir}/king_bkg_trials_sindec_{np.round(np.sin(dec), 3)}"
-    f"_N_{N_trials}_{file_identifier}.npy"
-)
 
-if os.path.exists(bg_file):
-    print(f"Loading existing background trials from:\n  {bg_file}")
-    bg_trials = np.load(bg_file)
-else:
-    with time("run test trials"):
-        raw_bg_trials = tr.get_many_fits(
-            n_trials=N_trials,
-            n_sig=0,
-            logging=True,
-            mp_cpus=mp_cpus,
-            seed=seed,
-        )
+with time("run test trials"):
+    bg_trials = get_many_fits_from_trials(
+        tr=tr,
+        n_trials=N_trials,
+        n_sig=0,
+        logging=True,
+        mp_cpus=mp_cpus,
+        seed=seed,
+    )
+    new_bg_array = np.zeros(len(bg_trials), dtype=dtype)
 
-        bg_trials = np.empty(len(raw_bg_trials), dtype=dtype)
-        bg_trials["gamma"] = raw_bg_trials["gamma"]
-        bg_trials["ns"] = raw_bg_trials["ns"]
-        bg_trials["ts"] = raw_bg_trials["ts"]
+    new_bg_array["gamma"] = bg_trials["gamma"]
+    new_bg_array["ns"] = bg_trials["ns"]
+    new_bg_array["ts"] = bg_trials["ts"]
 
-        np.save(bg_file, bg_trials)
+    bg_dir = cy.utils.ensure_dir(out_dir)
 
-        del raw_bg_trials
-
+    np.save(
+        f'{bg_dir}/king_bkg_trials_sindec_{np.round(np.sin(dec), 3)}_N_{N_trials}_{file_identifier}.npy',
+        new_bg_array,
+    )
+    
 if calc_sens:
-    bg_chi2 = cy.dists.Chi2TSD(bg_trials["ts"])
+    #fit trials with chi2
+    bg_chi2 = cy.dists.Chi2TSD(bg_trials)
     
-    sens_file = os.path.join(out_dir, f"TEST_king_sens_sindec_{src_sin_dec}_N_{N_trials}_{file_identifier}.json")
-    if not os.path.exists(sens_file):
-        #estimate sensitivity
-        with time('ps sensitivity'):
-            print(f'Estimating sensitivity for sin(dec) = {src_sin_dec}')
-            sens: dict = tr.find_n_sig(
-                # ts, threshold
-                bg_chi2.median(), # p = 50%
-                # beta, fraction of trials which should exceed the threshold
-                0.9, # beta = 90%
-                # n_inj step size for initial scan
-                n_sig_step=1,
-                # this many trials at a time
-                batch_size=500,
-                # tolerance, as estimated relative error
-                tol=.05,
-                mp_cpus = mp_cpus
-                )
-        
-        #calculating flux
-        n_sig_sens = sens['n_sig']
-        n_sig_err_sens = sens['n_sig_error']
-        
-        sens_flux = tr.to_E2dNdE(n_sig_sens, E0=100, unit=1e3)
-        sens_flux_err = (
-            tr.to_E2dNdE(n_sig_sens + n_sig_err_sens, E0=100, unit=1e3)
-            - sens_flux
-        )
-        sens['flux'] = sens_flux
-        sens['flux_err'] = sens_flux_err
-        #saving sensitivity   
-        json_sens_dict = to_jsonable(sens)
-        with open(sens_file, "w") as f:
-            json.dump(json_sens_dict, f)
-            
-        del sens
-  
-    #estimate 3 sigma discovery potential
+    """     #estimate sensitivity
+    with time('ps sensitivity'):
+        print(f'Estimating sensitivity for sin(dec) = {src_sin_dec}')
+        sens: dict = tr.find_n_sig(
+            # ts, threshold
+            bg_chi2.median(), # p = 50%
+            # beta, fraction of trials which should exceed the threshold
+            0.9, # beta = 90%
+            # n_inj step size for initial scan
+            n_sig_step=1,
+            # this many trials at a time
+            batch_size=500,
+            # tolerance, as estimated relative error
+            tol=.05,
+            mp_cpus = mp_cpus
+            )
     
-    disc_3sig_file = os.path.join(out_dir, f"TEST_king_3sig_disc_sindec_{src_sin_dec}_N_{N_trials}_{file_identifier}.json")
-    if not os.path.exists(disc_3sig_file):
-        with time('ps 3 sigma discovery potential'):
-            print(f'Estimating 3 sigma discovery potential for sin(dec) = {src_sin_dec}')
-            disc_3sig: dict = tr.find_n_sig(
-                bg_chi2.isf_nsigma(3), # p =35 sigma
-                0.5, # beta = 50%
-                n_sig_step=5, 
-                batch_size=500, 
-                tol=.05,
-                mp_cpus= mp_cpus
-                )
-        #calculating flux
-        n_sig_3sig_disc = disc_3sig['n_sig']
-        n_sig_err_3sig_disc = disc_3sig['n_sig_error']
-        
-        disc3_flux = tr.to_E2dNdE(n_sig_3sig_disc, E0=100, unit=1e3)
-        disc3_flux_err = (
-            tr.to_E2dNdE(n_sig_3sig_disc + n_sig_err_3sig_disc, E0=100, unit=1e3)
-            - disc3_flux
-        )
-        disc_3sig['flux'] = disc3_flux
-        disc_3sig['flux_err'] = disc3_flux_err
-        #saving discovery potential   
-        json_3sig_dic_dict = to_jsonable(disc_3sig)
-        with open(disc_3sig_file, "w") as f:
-            json.dump(json_3sig_dic_dict, f) 
-            
-        del disc_3sig
+    #calculating flux
+    n_sig_sens = sens['n_sig']
+    n_sig_err_sens = sens['n_sig_error']
+    
+    sens_flux = tr.to_E2dNdE(n_sig_sens, E0=100, unit=1e3)
+    sens_flux_err = (
+        tr.to_E2dNdE(n_sig_sens + n_sig_err_sens, E0=100, unit=1e3)
+        - sens_flux
+    )
+    sens['flux'] = sens_flux
+    sens['flux_err'] = sens_flux_err
+    #saving sensitivity   
+    json_sens_dict = to_jsonable(sens)
+    with open(os.path.join(out_dir, f"TEST_king_sens_sindec_{src_sin_dec}"
+        f"_N_{N_trials}_{file_identifier}.json"), "w") as f:
+        json.dump(json_sens_dict, f)
+   """
+    """     #estimate 3 sigma discovery potential
+    with time('ps 3 sigma discovery potential'):
+        print(f'Estimating 3 sigma discovery potential for sin(dec) = {src_sin_dec}')
+        disc_3sig: dict = tr.find_n_sig(
+            bg_chi2.isf_nsigma(3), # p =35 sigma
+            0.5, # beta = 50%
+            n_sig_step=5, 
+            batch_size=500, 
+            tol=.05,
+            mp_cpus= mp_cpus
+            )
+    #calculating flux
+    n_sig_3sig_disc = disc_3sig['n_sig']
+    n_sig_err_3sig_disc = disc_3sig['n_sig_error']
+    
+    disc3_flux = tr.to_E2dNdE(n_sig_3sig_disc, E0=100, unit=1e3)
+    disc3_flux_err = (
+        tr.to_E2dNdE(n_sig_3sig_disc + n_sig_err_3sig_disc, E0=100, unit=1e3)
+        - disc3_flux
+    )
+    disc_3sig['flux'] = disc3_flux
+    disc_3sig['flux_err'] = disc3_flux_err
+    #saving discovery potential   
+    json_3sig_dic_dict = to_jsonable(disc_3sig)
+    with open(os.path.join(out_dir, f"TEST_king_3sig_disc_sindec_{src_sin_dec}"
+        f"_N_{N_trials}_{file_identifier}.json"), "w") as f:
+        json.dump(json_3sig_dic_dict, f) 
+         """
 
+    """ trials = [get_many_fits_from_trials(tr = tr,
+                                    n_trials= 100, 
+                                    n_sig=n_sig, 
+                                    logging=True, 
+                                    mp_cpus = mp_cpus,
+                                    seed=int(n_sig)) for n_sig in n_sigs] """
     #test for bias
-    bias_file = os.path.join(out_dir, f"king_bias_{src_sin_dec}_N_{N_trials}_{file_identifier}.json")
-    if not os.path.exists(bias_file):
-        n_sigs = np.r_[:31:3]
-        trials = [tr.get_many_fits(100, n_sig=n_sig, logging=False, seed=n_sig) for n_sig in n_sigs]
-            
-        #We add the true number of events injected for bookkeeping convenience:
-        for (n_sig, t) in zip(n_sigs, trials):
-            t['ntrue'] = np.repeat(n_sig, len(t))
-
-        #Concatenate the trial batches:
-        allt = cy.utils.Arrays.concatenate(trials)
-        with open(bias_file, "wb") as f:
-            pickle.dump(allt, f)
+    n_sigs = np.r_[:31:3]
+    trials = [tr.get_many_fits(100, n_sig=n_sig, logging=False, seed=n_sig) for n_sig in n_sigs]
         
-        del allt
+    #We add the true number of events injected for bookkeeping convenience:
+    for (n_sig, t) in zip(n_sigs, trials):
+        t['ntrue'] = np.repeat(n_sig, len(t))
+
+    #Concatenate the trial batches:
+    allt = cy.utils.Arrays.concatenate(trials)
+    with open(os.path.join(out_dir, f"king_bias_{src_sin_dec}"
+        f"_N_{N_trials}_{file_identifier}.json"), "wb") as f:
+        pickle.dump(allt, f)
     
         
 ### Diagnostics Block ###
