@@ -1,0 +1,25 @@
+{
+  "spectral_indices": [
+    1.0,
+    1.7,
+    2.0,
+    2.3,
+    2.5,
+    2.7,
+    3.0,
+    3.3,
+    4.0
+  ],
+  "fixed": {
+    "signal_injection_gamma": 2.5,
+    "dpsi_nbins": 101,
+    "weight_field": "oneweight",
+    "true_ra_name": "true_ra",
+    "true_dec_name": "true_dec",
+    "true_energy_name": "true_energy",
+    "angular_cutoff_deg": 15.0
+  },
+  "candidates": [
+ 
+  ]
+}

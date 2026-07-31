@@ -5,7 +5,7 @@ import csky as cy
 
 
 def _fit_trials_worker(
-    tr,
+    tr: cy.trial.TrialRunner,
     n_trials,
     seeds,
     n_sig=0,
@@ -55,7 +55,7 @@ def _fit_trials_worker(
 
 
 def get_many_fits_from_trials(
-    tr,
+    tr: cy.trial.TrialRunner,
     n_trials,
     n_sig=0,
     poisson=False,
