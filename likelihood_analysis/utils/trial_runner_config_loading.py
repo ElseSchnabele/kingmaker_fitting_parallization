@@ -79,46 +79,19 @@ def restore_king_trial_runner(config_path, ana):
         angular_cutoff=np.radians(cfg["angular_cutoff_deg"]),
     )
 
-    def king_func(ra, dec, sigma, energy, src, pdf_bg, gamma=gamma, **kwargs):
-        ev = Arrays({
-            "ra": ra,
-            "dec": dec,
-            "sigma": sigma,
-            "energy": energy,
-            "log10energy": np.log10(energy),
-            "sindec": np.sin(dec),
-            "trueRa": ra,
-            "trueDec": dec,
-            "trueE": energy,
-        })
+    king_params = dict(angular_cutoff = np.radians(cfg['angular_cutoff_deg']),
+                   spectral_indicies = cfg["spectral_indices"],
+                   parametrization_bins = king_wrapper.parametrization_bins,
+                   cache_dir = out_dir)
+    
+    tr: cy.trial.TrialRunner = cy.get_trial_runner(ana = ana,
+                         src = srcs,
+                         flux = cy.hyp.PowerLawFlux(gamma),
+                         space = 'king',
+                         king_params = king_params,
+                         window_dist = king_params.get("angular_cutoff", np.pi),
+                         circle_cut = False,
+                         use_bdt = False
+                         )
 
-        king_wrapper.set_events(
-            events=ev,
-            source_ras=src.ra,
-            source_decs=src.dec,
-        )
-
-        out = king_wrapper.evaluate_pdf(events=ev, gamma=gamma)
-        out = np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
-        out[out < 0] = 0.0
-        out = out / pdf_bg
-
-        return out
-
-    tr: TrialRunner = cy.get_trial_runner(
-        ana=ana,
-        src=srcs,
-        mp_cpus=cfg["mp_cpus"],
-        use_bdt=True,
-        flux=cy.hyp.PowerLawFlux(gamma),
-        use_all_ev=True,
-        use_pdf_bg=True,
-        space="generic",
-        func=king_func,
-        features=cfg["features"],
-        fits=cfg["fits"],
-        extra_keep=["dec", "ra", "sigma", "sindec", "event", "energy"],
-        cut_n_sigma=np.inf,
-    )
-
-    return tr, king_wrapper, king_func, cfg
+    return tr, king_wrapper, cfg

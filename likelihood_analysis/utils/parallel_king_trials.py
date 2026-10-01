@@ -3,6 +3,9 @@ import numpy as np
 import multiprocessing as mp
 import csky as cy
 
+"""
+DEPRECATED - parallel working supported in kingmaker in the meanwhile
+"""
 
 def _fit_trials_worker(
     tr: cy.trial.TrialRunner,

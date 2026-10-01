@@ -601,11 +601,12 @@ def plot_selected_fit_bins(
     n_plots: int = 6,
     minimum_counts: int = 100,
     random_seed: Optional[int] = None,
-    x_log=True,
-    y_log=True,
+    x_log: bool = True,
+    y_log: bool = True,
     normalize_fit_to_hist: bool = True,
     show_rayleigh_ref: bool = False,
     plot_kind: Literal["density", "radial"] = "density",
+    curve_kind: Literal["pdf", "cdf", "both"] = "pdf",
     figsize: Tuple[float, float] = (15, 10),
 
     # Rayleigh reference options
@@ -614,34 +615,97 @@ def plot_selected_fit_bins(
     rayleigh_weighted: bool = False,
     weight_field: Optional[str] = None,
     true_energy_name: str = "true_energy",
-    show_data : bool = True,
-    selected_bin_idx: Optional[Tuple[int, int, int]] = None,
-    x_lim: Optional[float] = 3.0
+    show_data: bool = True,
+    selected_bin_idx: Optional[Tuple[int, ...]] = None,
+    x_lim: Optional[float] = 3.0,
 ):
     """
-    Plot selected stored King fits and optionally overlay the corresponding
-    Rayleigh reference from the MC events in the same parametrization bin.
+    Plot selected stored King fits.
+
+    Parameters
+    ----------
+    curve_kind : {"pdf", "cdf", "both"}
+        "pdf"
+            Plot histogram/density and fitted King PDF.
+
+        "cdf"
+            Plot empirical MC CDF and fitted King CDF.
+
+        "both"
+            Plot PDF and CDF next to each other for every selected
+            parametrization bin.
+
+    plot_kind : {"density", "radial"}
+        Only affects PDF plots.
+
+        "density"
+            Plot density per steradian.
+
+        "radial"
+            Plot radial PDF = 2*pi*sin(psi) * density.
+
+        CDF plots are independent of plot_kind.
     """
 
+    # ---------------------------------------------------------
+    # Validation
+    # ---------------------------------------------------------
+
+    if curve_kind not in {"pdf", "cdf", "both"}:
+        raise ValueError(
+            "curve_kind must be one of: 'pdf', 'cdf', 'both'"
+        )
+
+    if plot_kind not in {"density", "radial"}:
+        raise ValueError(
+            "plot_kind must be either 'density' or 'radial'"
+        )
+
+    # ---------------------------------------------------------
+    # Rayleigh helpers
+    # ---------------------------------------------------------
+
     def rayleigh_density(dpsi, sigma):
-        return np.exp(-0.5 * (dpsi / sigma) ** 2) / (2 * np.pi * sigma**2)
+        return (
+            np.exp(-0.5 * (dpsi / sigma) ** 2)
+            / (2 * np.pi * sigma**2)
+        )
 
     def rayleigh_radial(dpsi, sigma):
-        return (dpsi / sigma**2) * np.exp(-0.5 * (dpsi / sigma) ** 2)
+        return (
+            (dpsi / sigma**2)
+            * np.exp(-0.5 * (dpsi / sigma) ** 2)
+        )
+
+    def rayleigh_cdf(dpsi, sigma):
+        return 1.0 - np.exp(
+            -0.5 * (dpsi / sigma) ** 2
+        )
+
+    # ---------------------------------------------------------
+    # Event helpers
+    # ---------------------------------------------------------
 
     def get_event_values(events, name):
         if hasattr(events, name):
             return getattr(events, name)
         return events[name]
 
-    def get_bin_event_mask(events, parametrization_bins, bin_names, bin_idx):
+    def get_bin_event_mask(
+        events,
+        parametrization_bins,
+        bin_names,
+        bin_idx,
+    ):
         mask = np.ones(len(events), dtype=bool)
 
         for dim, name in enumerate(bin_names):
             edges = np.asarray(parametrization_bins[name])
             idx = bin_idx[dim]
 
-            vals = np.asarray(get_event_values(events, name))
+            vals = np.asarray(
+                get_event_values(events, name)
+            )
 
             if idx == len(edges) - 2:
                 mask &= vals >= edges[idx]
@@ -654,11 +718,19 @@ def plot_selected_fit_bins(
 
     if show_rayleigh_ref and signal_events is None:
         raise ValueError(
-            "show_rayleigh_ref=True requires signal_events, i.e. the same MC events "
-            "used to build the King fit histograms."
+            "show_rayleigh_ref=True requires signal_events, "
+            "i.e. the same MC events used to build the King "
+            "fit histograms."
         )
 
-    parametrization_bins = fit_parameters["parametrization_bins"]
+    # ---------------------------------------------------------
+    # Stored fit data
+    # ---------------------------------------------------------
+
+    parametrization_bins = fit_parameters[
+        "parametrization_bins"
+    ]
+
     if isinstance(parametrization_bins, np.ndarray):
         parametrization_bins = parametrization_bins.item()
 
@@ -672,25 +744,81 @@ def plot_selected_fit_bins(
     fit_quality = fit_parameters["fit_quality"]
     event_counts = fit_parameters["event_counts"]
 
+    # ---------------------------------------------------------
+    # Metric helper
+    # ---------------------------------------------------------
+
+    def get_metric_function(metric_name):
+
+        if metric_name == "CDF_RMS":
+            return cdf_rms
+
+        elif metric_name == "CDF_root_median_squared":
+            return cdf_root_median_squared
+
+        elif metric_name == "CDF_weighted_rms":
+            return weighted_cdf_rms
+
+        elif metric_name == "CDF_density_weighted_rms":
+            return density_weighted_cdf_rms
+
+        elif metric_name == "PDF_RMS":
+            return pdf_rms
+
+        elif metric_name == "PDF_root_median_squared":
+            return pdf_root_median_squared
+
+        elif metric_name == "PDF_weighted_rms":
+            return weighted_pdf_rms
+
+        elif metric_name == "PDF_density_weighted_rms":
+            return density_weighted_pdf_rms
+
+        else:
+            raise ValueError(
+                f"Unknown metric: {metric_name}"
+            )
+
+    # ---------------------------------------------------------
+    # Select bins
+    # ---------------------------------------------------------
+
     good_bins = []
+
     if selected_bin_idx is not None:
+
         selected_bin_idx = tuple(selected_bin_idx)
 
         if len(selected_bin_idx) != len(bin_names):
             raise ValueError(
-                f"selected_bin_idx must have length {len(bin_names)} "
-                f"for dimensions {bin_names}, got {len(selected_bin_idx)}."
+                f"selected_bin_idx must have length "
+                f"{len(bin_names)} for dimensions {bin_names}, "
+                f"got {len(selected_bin_idx)}."
             )
 
-        param_idx = (gamma_idx,) + selected_bin_idx
+        param_idx = (
+            gamma_idx,
+        ) + selected_bin_idx
 
-        if not np.all(np.asarray(selected_bin_idx) >= 0):
-            raise ValueError(f"selected_bin_idx must be non-negative, got {selected_bin_idx}.")
-
-        if any(i >= s for i, s in zip(selected_bin_idx, fit_alpha[gamma_idx].shape)):
+        if not np.all(
+            np.asarray(selected_bin_idx) >= 0
+        ):
             raise ValueError(
-                f"selected_bin_idx {selected_bin_idx} out of range for "
-                f"shape {fit_alpha[gamma_idx].shape}."
+                f"selected_bin_idx must be non-negative, "
+                f"got {selected_bin_idx}."
+            )
+
+        if any(
+            i >= s
+            for i, s in zip(
+                selected_bin_idx,
+                fit_alpha[gamma_idx].shape,
+            )
+        ):
+            raise ValueError(
+                f"selected_bin_idx {selected_bin_idx} "
+                f"out of range for shape "
+                f"{fit_alpha[gamma_idx].shape}."
             )
 
         if event_counts[param_idx] < minimum_counts:
@@ -700,30 +828,19 @@ def plot_selected_fit_bins(
                 f"(minimum_counts={minimum_counts})."
             )
 
-        if not np.any(histograms[param_idx] > 0):
-            raise RuntimeError(f"Selected bin {selected_bin_idx} has no histogram entries.")
+        if not np.any(
+            histograms[param_idx] > 0
+        ):
+            raise RuntimeError(
+                f"Selected bin {selected_bin_idx} "
+                "has no histogram entries."
+            )
 
         if metric == "CDF_chi2":
             selected_quality = fit_quality[param_idx]
+
         else:
-            if metric == "CDF_RMS":
-                func = cdf_rms
-            elif metric == "CDF_root_median_squared":
-                func = cdf_root_median_squared
-            elif metric == "CDF_weighted_rms":
-                func = weighted_cdf_rms
-            elif metric == "CDF_density_weighted_rms":
-                func = density_weighted_cdf_rms
-            elif metric == "PDF_RMS":
-                func = pdf_rms
-            elif metric == "PDF_root_median_squared":
-                func = pdf_root_median_squared
-            elif metric == "PDF_weighted_rms":
-                func = weighted_pdf_rms
-            elif metric == "PDF_density_weighted_rms":
-                func = density_weighted_pdf_rms
-            else:
-                raise ValueError(f"Unknown metric: {metric}")
+            func = get_metric_function(metric)
 
             selected_quality = func(
                 fit_parameters=fit_parameters,
@@ -732,36 +849,35 @@ def plot_selected_fit_bins(
                 king_pdf=king_pdf,
             )[param_idx]
 
-        selected_bins = [(selected_bin_idx, selected_quality)]
-        
-    for bin_idx in np.ndindex(*fit_alpha[gamma_idx].shape):
-        param_idx = (gamma_idx,) + bin_idx
+        selected_bins = [
+            (
+                selected_bin_idx,
+                selected_quality,
+            )
+        ]
+
+    # ---------------------------------------------------------
+    # Search all valid bins
+    # ---------------------------------------------------------
+
+    for bin_idx in np.ndindex(
+        *fit_alpha[gamma_idx].shape
+    ):
+
+        param_idx = (
+            gamma_idx,
+        ) + bin_idx
 
         if (
             event_counts[param_idx] >= minimum_counts
             and np.any(histograms[param_idx] > 0)
         ):
+
             if metric == "CDF_chi2":
                 quality_metric = fit_quality[param_idx]
+
             else:
-                if metric == "CDF_RMS":
-                    func = cdf_rms
-                elif metric == "CDF_root_median_squared":
-                    func = cdf_root_median_squared
-                elif metric == "CDF_weighted_rms":
-                    func = weighted_cdf_rms
-                elif metric == "CDF_density_weighted_rms":
-                    func = density_weighted_cdf_rms
-                elif metric == "PDF_RMS":
-                    func = pdf_rms
-                elif metric == "PDF_root_median_squared":
-                    func = pdf_root_median_squared
-                elif metric == "PDF_weighted_rms":
-                    func = weighted_pdf_rms
-                elif metric == "PDF_density_weighted_rms":
-                    func = density_weighted_pdf_rms
-                else:
-                    raise ValueError(f"Unknown metric: {metric}")
+                func = get_metric_function(metric)
 
                 quality_metric = func(
                     fit_parameters=fit_parameters,
@@ -770,78 +886,245 @@ def plot_selected_fit_bins(
                     king_pdf=king_pdf,
                 )[param_idx]
 
-            if np.isfinite(quality_metric) and quality_metric > 0:
-                good_bins.append((bin_idx, quality_metric))
+            if (
+                np.isfinite(quality_metric)
+                and quality_metric > 0
+            ):
+                good_bins.append(
+                    (
+                        bin_idx,
+                        quality_metric,
+                    )
+                )
 
-    if len(good_bins) == 0:
-        raise RuntimeError("No valid fitted bins found.")
     if selected_bin_idx is None:
+
+        if len(good_bins) == 0:
+            raise RuntimeError(
+                "No valid fitted bins found."
+            )
+
         if mode == "best":
-            selected_bins = sorted(good_bins, key=lambda x: x[1])[:n_plots]
+
+            selected_bins = sorted(
+                good_bins,
+                key=lambda x: x[1],
+            )[:n_plots]
 
         elif mode == "worst":
-            selected_bins = sorted(good_bins, key=lambda x: x[1], reverse=True)[:n_plots]
+
+            selected_bins = sorted(
+                good_bins,
+                key=lambda x: x[1],
+                reverse=True,
+            )[:n_plots]
 
         elif mode == "random":
-            rng = np.random.default_rng(random_seed)
+
+            rng = np.random.default_rng(
+                random_seed
+            )
+
             indices = rng.choice(
                 len(good_bins),
-                size=min(n_plots, len(good_bins)),
+                size=min(
+                    n_plots,
+                    len(good_bins),
+                ),
                 replace=False,
             )
-            selected_bins = [good_bins[i] for i in indices]
+
+            selected_bins = [
+                good_bins[i]
+                for i in indices
+            ]
 
         elif mode == "grid":
-            good_bin_indices = np.asarray([b[0] for b in good_bins])
-            good_quality = np.asarray([b[1] for b in good_bins])
 
-            n_select = min(n_plots, len(good_bins))
+            good_bin_indices = np.asarray(
+                [b[0] for b in good_bins]
+            )
 
-            shape = np.asarray(fit_alpha[gamma_idx].shape)
-            denom = np.maximum(shape - 1, 1)
-            good_pos = good_bin_indices / denom
+            good_quality = np.asarray(
+                [b[1] for b in good_bins]
+            )
 
-            targets_1d = np.linspace(0, 1, n_select)
-            target_pos = np.repeat(targets_1d[:, None], good_pos.shape[1], axis=1)
+            n_select = min(
+                n_plots,
+                len(good_bins),
+            )
+
+            shape = np.asarray(
+                fit_alpha[gamma_idx].shape
+            )
+
+            denom = np.maximum(
+                shape - 1,
+                1,
+            )
+
+            good_pos = (
+                good_bin_indices / denom
+            )
+
+            targets_1d = np.linspace(
+                0,
+                1,
+                n_select,
+            )
+
+            target_pos = np.repeat(
+                targets_1d[:, None],
+                good_pos.shape[1],
+                axis=1,
+            )
 
             selected_bins = []
             used = set()
 
             for target in target_pos:
-                distances = np.linalg.norm(good_pos - target, axis=1)
 
-                for idx in np.argsort(distances):
-                    bin_tuple = tuple(good_bin_indices[idx])
+                distances = np.linalg.norm(
+                    good_pos - target,
+                    axis=1,
+                )
+
+                for idx in np.argsort(
+                    distances
+                ):
+
+                    bin_tuple = tuple(
+                        good_bin_indices[idx]
+                    )
+
                     if bin_tuple not in used:
-                        selected_bins.append((bin_tuple, good_quality[idx]))
+
+                        selected_bins.append(
+                            (
+                                bin_tuple,
+                                good_quality[idx],
+                            )
+                        )
+
                         used.add(bin_tuple)
                         break
 
         else:
-            raise ValueError("mode must be one of: 'best', 'worst', 'random', 'grid'")
+            raise ValueError(
+                "mode must be one of: "
+                "'best', 'worst', 'random', 'grid'"
+            )
 
-    n_cols = 1 if selected_bin_idx is not None else min(3, n_plots)
-    n_rows = int(np.ceil(len(selected_bins) / n_cols))
+    # ---------------------------------------------------------
+    # Figure layout
+    # ---------------------------------------------------------
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
-    axes = np.atleast_1d(axes).flatten()
+    n_selected = len(selected_bins)
 
-    print(f"Found {len(good_bins)} bins with stored fits")
-    print(f"Showing {mode} bins:")
+    if curve_kind == "both":
 
-    for i, (bin_idx, quality) in enumerate(selected_bins):
-        print(f"{i + 1}: bin={bin_idx}, {metric}={quality:.3f}")
+        # One selected bin per row:
+        #
+        #   PDF | CDF
+        #
+        n_rows = n_selected
+        n_cols = 2
 
-    for ax, (bin_idx, quality) in zip(axes, selected_bins):
-        param_idx = (gamma_idx,) + bin_idx
+        if figsize == (15, 10):
+            figsize_use = (
+                14,
+                max(
+                    4,
+                    4 * n_selected,
+                ),
+            )
+        else:
+            figsize_use = figsize
 
-        hist = np.asarray(histograms[param_idx], dtype=float)
-        uncertainty = np.asarray(uncertainties[param_idx], dtype=float)
-        bins = np.asarray(dpsi_bins[param_idx], dtype=float)
+    else:
+
+        n_cols = (
+            1
+            if selected_bin_idx is not None
+            else min(
+                3,
+                n_selected,
+            )
+        )
+
+        n_rows = int(
+            np.ceil(
+                n_selected / n_cols
+            )
+        )
+
+        figsize_use = figsize
+
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=figsize_use,
+        squeeze=False,
+    )
+
+    # ---------------------------------------------------------
+    # Console output
+    # ---------------------------------------------------------
+
+    print(
+        f"Found {len(good_bins)} bins "
+        "with stored fits"
+    )
+
+    print(
+        f"Showing {mode} bins:"
+    )
+
+    for i, (
+        bin_idx,
+        quality,
+    ) in enumerate(selected_bins):
+
+        print(
+            f"{i + 1}: "
+            f"bin={bin_idx}, "
+            f"{metric}={quality:.3f}"
+        )
+
+    # ---------------------------------------------------------
+    # Plotting helper
+    # ---------------------------------------------------------
+
+    def plot_single_curve(
+        ax,
+        curve_type,
+        bin_idx,
+        quality,
+    ):
+
+        param_idx = (
+            gamma_idx,
+        ) + bin_idx
+
+        hist = np.asarray(
+            histograms[param_idx],
+            dtype=float,
+        )
+
+        uncertainty = np.asarray(
+            uncertainties[param_idx],
+            dtype=float,
+        )
+
+        bins = np.asarray(
+            dpsi_bins[param_idx],
+            dtype=float,
+        )
 
         mask = hist > 0
 
         if np.sum(mask) == 0:
+
             ax.text(
                 0.5,
                 0.5,
@@ -849,41 +1132,218 @@ def plot_selected_fit_bins(
                 ha="center",
                 va="center",
             )
-            ax.set_axis_off()
-            continue
 
-        bin_centers_all = (bins[:-1] + bins[1:]) / 2
-        bin_centers = bin_centers_all[mask]
+            ax.set_axis_off()
+            return
+
+        bin_centers_all = (
+            bins[:-1] + bins[1:]
+        ) / 2
+
+        bin_centers = (
+            bin_centers_all[mask]
+        )
 
         alpha = fit_alpha[param_idx]
         beta = fit_beta[param_idx]
 
-        valid_edges = bins[: np.sum(mask) + 1]
-        dpsi_max = valid_edges[-1]
-        eps = 1e-6  # radians
-        dpsi_fine = np.geomspace(eps, dpsi_max, 1000)
-        dpsi_fine = np.insert(dpsi_fine, 0, 0.0)
+        # Use the last actually occupied bin.
+        valid_indices = np.flatnonzero(mask)
 
-        if plot_kind == "radial":
-            jac_hist = 2 * np.pi * np.sin(bin_centers)
-            hist_plot = hist[mask] * jac_hist
-            uncertainty_plot = uncertainty[mask] * jac_hist
+        last_valid_idx = valid_indices[-1]
 
-            pdf_fit = king_pdf.pdf(dpsi_fine, alpha, beta)
-            pdf_fit = 2 * np.pi * np.sin(dpsi_fine) * pdf_fit
+        dpsi_max = bins[
+            last_valid_idx + 1
+        ]
+
+        eps = 1e-6
+
+        dpsi_fine = np.geomspace(
+            eps,
+            dpsi_max,
+            1000,
+        )
+
+        dpsi_fine = np.insert(
+            dpsi_fine,
+            0,
+            0.0,
+        )
+
+        # =====================================================
+        # PDF
+        # =====================================================
+
+        if curve_type == "pdf":
+
+            if plot_kind == "radial":
+
+                jac_hist = (
+                    2
+                    * np.pi
+                    * np.sin(
+                        bin_centers
+                    )
+                )
+
+                hist_plot = (
+                    hist[mask]
+                    * jac_hist
+                )
+
+                uncertainty_plot = (
+                    uncertainty[mask]
+                    * jac_hist
+                )
+
+                fit_curve = np.asarray(
+                    king_pdf.pdf(
+                        dpsi_fine,
+                        alpha,
+                        beta,
+                    ),
+                    dtype=float,
+                )
+
+                fit_curve = (
+                    2
+                    * np.pi
+                    * np.sin(
+                        dpsi_fine
+                    )
+                    * fit_curve
+                )
+
+            else:
+
+                hist_plot = hist[mask]
+
+                uncertainty_plot = (
+                    uncertainty[mask]
+                )
+
+                fit_curve = np.asarray(
+                    king_pdf.pdf(
+                        dpsi_fine,
+                        alpha,
+                        beta,
+                    ),
+                    dtype=float,
+                )
+
+            if normalize_fit_to_hist:
+
+                max_fit = np.nanmax(
+                    fit_curve
+                )
+
+                max_hist = np.nanmax(
+                    hist_plot
+                )
+
+                if (
+                    np.isfinite(max_fit)
+                    and max_fit > 0
+                    and np.isfinite(max_hist)
+                ):
+                    fit_curve = (
+                        fit_curve
+                        * max_hist
+                        / max_fit
+                    )
+
+            x_data = bin_centers
+
+        # =====================================================
+        # CDF
+        # =====================================================
+
+        elif curve_type == "cdf":
+
+            # Work only with occupied histogram bins.
+            bin_low = bins[:-1][mask]
+            bin_high = bins[1:][mask]
+
+            # Exact solid angle of spherical annulus:
+            #
+            # ΔΩ = 2π [cos(theta_low)-cos(theta_high)]
+            #
+            solid_angle = (
+                2
+                * np.pi
+                * (
+                    np.cos(bin_low)
+                    - np.cos(bin_high)
+                )
+            )
+
+            probability_per_bin = (
+                hist[mask]
+                * solid_angle
+            )
+
+            total_probability = np.sum(
+                probability_per_bin
+            )
+
+            if (
+                not np.isfinite(
+                    total_probability
+                )
+                or total_probability <= 0
+            ):
+                raise RuntimeError(
+                    f"Cannot construct CDF for "
+                    f"bin {bin_idx}: histogram "
+                    "integral is not positive."
+                )
+
+            hist_plot = (
+                np.cumsum(
+                    probability_per_bin
+                )
+                / total_probability
+            )
+
+            probability_uncertainty = (
+                uncertainty[mask]
+                * solid_angle
+            )
+
+            uncertainty_plot = (
+                np.sqrt(
+                    np.cumsum(
+                        probability_uncertainty**2
+                    )
+                )
+                / total_probability
+            )
+
+            # CDF point corresponds to cumulative
+            # probability through upper edge.
+            x_data = bin_high
+
+            fit_curve = np.asarray(
+                king_pdf.cdf(
+                    dpsi_fine,
+                    alpha,
+                    beta,
+                ),
+                dtype=float,
+            )
 
         else:
-            hist_plot = hist[mask]
-            uncertainty_plot = uncertainty[mask]
+            raise ValueError(
+                f"Unknown curve type: "
+                f"{curve_type}"
+            )
 
-            pdf_fit = king_pdf.pdf(dpsi_fine, alpha, beta)
-
-        if normalize_fit_to_hist:
-            if np.nanmax(pdf_fit) > 0:
-                pdf_fit *= np.nanmax(hist_plot) / np.nanmax(pdf_fit)
+        # -----------------------------------------------------
+        # MC data
+        # -----------------------------------------------------
 
         ax.errorbar(
-            np.degrees(bin_centers),
+            np.degrees(x_data),
             hist_plot,
             yerr=uncertainty_plot,
             fmt="o",
@@ -892,139 +1352,457 @@ def plot_selected_fit_bins(
             markersize=4,
         )
 
+        # -----------------------------------------------------
+        # King fit
+        # -----------------------------------------------------
+
         ax.plot(
-            np.degrees(dpsi_fine),
-            pdf_fit,
+            np.degrees(
+                dpsi_fine
+            ),
+            fit_curve,
             "-",
             linewidth=2,
-            label="King Fit",
+            label=(
+                f"King "
+                f"{curve_type.upper()}"
+            ),
             color="blue",
         )
 
+        # -----------------------------------------------------
+        # Rayleigh reference
+        # -----------------------------------------------------
+
         if show_rayleigh_ref:
-            event_mask = get_bin_event_mask(
-                signal_events,
-                parametrization_bins,
-                bin_names,
-                bin_idx,
+
+            event_mask = (
+                get_bin_event_mask(
+                    signal_events,
+                    parametrization_bins,
+                    bin_names,
+                    bin_idx,
+                )
             )
 
             sigmas = np.asarray(
-                get_event_values(signal_events, rayleigh_sigma_name)[event_mask],
+                get_event_values(
+                    signal_events,
+                    rayleigh_sigma_name,
+                )[event_mask],
                 dtype=float,
             )
 
-            valid_sigma = np.isfinite(sigmas) & (sigmas > 0)
-            sigmas = sigmas[valid_sigma]
+            valid_sigma = (
+                np.isfinite(sigmas)
+                & (sigmas > 0)
+            )
+
+            sigmas = sigmas[
+                valid_sigma
+            ]
 
             if len(sigmas) > 0:
-                if plot_kind == "radial":
-                    rayleigh_curves = rayleigh_radial(
-                        dpsi_fine[:, None],
-                        sigmas[None, :],
-                    )
-                else:
-                    rayleigh_curves = rayleigh_density(
-                        dpsi_fine[:, None],
-                        sigmas[None, :],
+
+                if curve_type == "cdf":
+
+                    rayleigh_curves = (
+                        rayleigh_cdf(
+                            dpsi_fine[
+                                :,
+                                None,
+                            ],
+                            sigmas[
+                                None,
+                                :,
+                            ],
+                        )
                     )
 
-                if rayleigh_weighted:
-                    if weight_field is None:
-                        raise ValueError(
-                            "rayleigh_weighted=True requires weight_field, "
-                            "for example weight_field='ow' or 'oneweight'."
+                else:
+
+                    if plot_kind == "radial":
+
+                        rayleigh_curves = (
+                            rayleigh_radial(
+                                dpsi_fine[
+                                    :,
+                                    None,
+                                ],
+                                sigmas[
+                                    None,
+                                    :,
+                                ],
+                            )
                         )
 
-                    gamma = fit_parameters.get("spectral_indices", None)
-                    if gamma is not None:
-                        gamma = np.asarray(gamma)[gamma_idx]
                     else:
+
+                        rayleigh_curves = (
+                            rayleigh_density(
+                                dpsi_fine[
+                                    :,
+                                    None,
+                                ],
+                                sigmas[
+                                    None,
+                                    :,
+                                ],
+                            )
+                        )
+
+                # ---------------------------------------------
+                # Weighted Rayleigh average
+                # ---------------------------------------------
+
+                if rayleigh_weighted:
+
+                    if weight_field is None:
+
                         raise ValueError(
-                            "rayleigh_weighted=True requires "
-                            "fit_parameters['spectral_indices']."
+                            "rayleigh_weighted=True "
+                            "requires weight_field, "
+                            "for example "
+                            "weight_field='ow' "
+                            "or 'oneweight'."
+                        )
+
+                    gamma = (
+                        fit_parameters.get(
+                            "spectral_indices",
+                            None,
+                        )
+                    )
+
+                    if gamma is not None:
+
+                        gamma = np.asarray(
+                            gamma
+                        )[gamma_idx]
+
+                    else:
+
+                        raise ValueError(
+                            "rayleigh_weighted=True "
+                            "requires "
+                            "fit_parameters"
+                            "['spectral_indices']."
                         )
 
                     weights = np.asarray(
-                        get_event_values(signal_events, weight_field)[event_mask],
+                        get_event_values(
+                            signal_events,
+                            weight_field,
+                        )[event_mask],
                         dtype=float,
                     )
+
                     true_energy = np.asarray(
-                        get_event_values(signal_events, true_energy_name)[event_mask],
+                        get_event_values(
+                            signal_events,
+                            true_energy_name,
+                        )[event_mask],
                         dtype=float,
                     )
 
-                    weights = weights[valid_sigma]
-                    true_energy = true_energy[valid_sigma]
+                    weights = weights[
+                        valid_sigma
+                    ]
 
-                    weights = weights * true_energy ** (-gamma)
-                    weights = np.asarray(weights, dtype=float)
+                    true_energy = (
+                        true_energy[
+                            valid_sigma
+                        ]
+                    )
 
-                    valid_w = np.isfinite(weights) & (weights > 0)
+                    weights = (
+                        weights
+                        * true_energy
+                        ** (-gamma)
+                    )
+
+                    weights = np.asarray(
+                        weights,
+                        dtype=float,
+                    )
+
+                    valid_w = (
+                        np.isfinite(weights)
+                        & (weights > 0)
+                    )
 
                     if np.any(valid_w):
-                        pdf_rayleigh = np.average(
-                            rayleigh_curves[:, valid_w],
-                            axis=1,
-                            weights=weights[valid_w],
+
+                        rayleigh_curve = (
+                            np.average(
+                                rayleigh_curves[
+                                    :,
+                                    valid_w,
+                                ],
+                                axis=1,
+                                weights=weights[
+                                    valid_w
+                                ],
+                            )
                         )
+
                     else:
-                        pdf_rayleigh = np.nanmean(rayleigh_curves, axis=1)
+
+                        rayleigh_curve = (
+                            np.nanmean(
+                                rayleigh_curves,
+                                axis=1,
+                            )
+                        )
 
                 else:
-                    pdf_rayleigh = np.nanmean(rayleigh_curves, axis=1)
 
-                if normalize_fit_to_hist:
-                    if np.nanmax(pdf_rayleigh) > 0:
-                        pdf_rayleigh *= np.nanmax(hist_plot) / np.nanmax(pdf_rayleigh)
+                    rayleigh_curve = (
+                        np.nanmean(
+                            rayleigh_curves,
+                            axis=1,
+                        )
+                    )
+
+                # Only PDF curves get peak normalization.
+                if (
+                    curve_type == "pdf"
+                    and normalize_fit_to_hist
+                ):
+
+                    max_rayleigh = np.nanmax(
+                        rayleigh_curve
+                    )
+
+                    max_hist = np.nanmax(
+                        hist_plot
+                    )
+
+                    if (
+                        np.isfinite(
+                            max_rayleigh
+                        )
+                        and max_rayleigh > 0
+                        and np.isfinite(
+                            max_hist
+                        )
+                    ):
+
+                        rayleigh_curve = (
+                            rayleigh_curve
+                            * max_hist
+                            / max_rayleigh
+                        )
 
                 ax.plot(
-                    np.degrees(dpsi_fine),
-                    pdf_rayleigh,
+                    np.degrees(
+                        dpsi_fine
+                    ),
+                    rayleigh_curve,
                     "--",
                     linewidth=2,
-                    label="Rayleigh",
+                    label=(
+                        f"Rayleigh "
+                        f"{curve_type.upper()}"
+                    ),
                     color="red",
                 )
 
-        title = f"α={np.degrees(alpha):.3f}°, β={beta:.2f}\n"
+        # -----------------------------------------------------
+        # Title
+        # -----------------------------------------------------
 
-        for dim, name in enumerate(bin_names):
+        title = (
+            f"α={np.degrees(alpha):.3f}°, "
+            f"β={beta:.2f}\n"
+        )
+
+        for dim, name in enumerate(
+            bin_names
+        ):
+
             idx = bin_idx[dim]
-            edges = parametrization_bins[name]
+
+            edges = (
+                parametrization_bins[
+                    name
+                ]
+            )
+
             low = edges[idx]
             high = edges[idx + 1]
 
-            if name in {"dec", "zen", "angErr", "sigma"}:
+            if name in {
+                "dec",
+                "zen",
+                "angErr",
+                "sigma",
+            }:
+
                 low = np.degrees(low)
                 high = np.degrees(high)
-                title += f"{name}=[{low:.2g}, {high:.2g}]° "
+
+                title += (
+                    f"{name}="
+                    f"[{low:.2g}, "
+                    f"{high:.2g}]° "
+                )
+
             else:
-                title += f"{name}=[{low:.2g}, {high:.2g}] "
+
+                title += (
+                    f"{name}="
+                    f"[{low:.2g}, "
+                    f"{high:.2g}] "
+                )
+
         if show_data:
-            ax.set_title(title, fontsize=9)
-        ax.set_xlabel("Angular Error (degrees)")
-        ax.set_ylabel("PDF" if plot_kind == "radial" else "Density")
+            ax.set_title(
+                title,
+                fontsize=9,
+            )
+
+        # -----------------------------------------------------
+        # Axes
+        # -----------------------------------------------------
+
+        ax.set_xlabel(
+            "Angular Error (degrees)"
+        )
+
+        if curve_type == "cdf":
+
+            ax.set_ylabel("CDF")
+
+            # CDFs are naturally linear in y.
+            ax.set_yscale("linear")
+
+            ax.set_ylim(
+                0,
+                1.05,
+            )
+
+        else:
+
+            if plot_kind == "radial":
+                ax.set_ylabel(
+                    "Radial PDF"
+                )
+
+            else:
+                ax.set_ylabel(
+                    "Density"
+                )
+
+            if y_log:
+                ax.set_yscale(
+                    "log"
+                )
 
         if x_log:
-            ax.set_xscale("log")
-        if y_log:
-            ax.set_yscale("log")
+            ax.set_xscale(
+                "log"
+            )
 
-        ax.grid(alpha=0.3)
-        ax.set_xlim(0, x_lim)
+        ax.grid(
+            alpha=0.3
+        )
 
-        handles, labels = ax.get_legend_handles_labels()
+        if x_lim is not None:
+            ax.set_xlim(
+                0,
+                x_lim,
+            )
+
+        # -----------------------------------------------------
+        # Legend
+        # -----------------------------------------------------
+
+        handles, labels = (
+            ax.get_legend_handles_labels()
+        )
+
         if show_data:
-            handles.extend([
-                Line2D([], [], linestyle="none", label=f"{metric}: {quality:.4f}"),
-                Line2D([], [], linestyle="none", label=f"#Events: {event_counts[param_idx]}"),
-            ])
 
-        ax.legend(handles=handles, fontsize=8, framealpha=0.9)
+            handles.extend(
+                [
+                    Line2D(
+                        [],
+                        [],
+                        linestyle="none",
+                        label=(
+                            f"{metric}: "
+                            f"{quality:.4f}"
+                        ),
+                    ),
+                    Line2D(
+                        [],
+                        [],
+                        linestyle="none",
+                        label=(
+                            "#Events: "
+                            f"{event_counts[param_idx]}"
+                        ),
+                    ),
+                ]
+            )
 
-    for ax in axes[len(selected_bins):]:
-        ax.set_axis_off()
+        ax.legend(
+            handles=handles,
+            fontsize=8,
+            framealpha=0.9,
+        )
+
+    # ---------------------------------------------------------
+    # Draw selected bins
+    # ---------------------------------------------------------
+
+    if curve_kind == "both":
+
+        for row, (
+            bin_idx,
+            quality,
+        ) in enumerate(
+            selected_bins
+        ):
+
+            plot_single_curve(
+                axes[row, 0],
+                "pdf",
+                bin_idx,
+                quality,
+            )
+
+            plot_single_curve(
+                axes[row, 1],
+                "cdf",
+                bin_idx,
+                quality,
+            )
+
+    else:
+
+        flat_axes = axes.flatten()
+
+        for ax, (
+            bin_idx,
+            quality,
+        ) in zip(
+            flat_axes,
+            selected_bins,
+        ):
+
+            plot_single_curve(
+                ax,
+                curve_kind,
+                bin_idx,
+                quality,
+            )
+
+        for ax in flat_axes[
+            len(selected_bins):
+        ]:
+            ax.set_axis_off()
 
     plt.tight_layout()
     plt.show()
@@ -1176,3 +1954,362 @@ def plot_event_count_distributions(
         "counts_failed": counts_failed,
         "counts_fitted": counts_fitted,
     }
+    
+def plot_fit_metric_statistics(
+    fit_parameters: Dict[str, Any],
+    king_pdf: Callable,
+    metrics: Optional[list[str]] = None,
+    gamma_idx: Optional[int] = None,
+    minimum_counts: int = 100,
+    bins: int = 50,
+    density: bool = False,
+    log_x: bool = False,
+    log_y: bool = False,
+    figsize: Tuple[float, float] = (10, 6),
+    show_statistics: bool = True,
+):
+    """
+    Calculate and plot the distributions of fit-quality metrics over all
+    valid parametrization bins.
+
+    Parameters
+    ----------
+    fit_parameters : dict
+        Dictionary containing the stored King-fit results.
+
+    king_pdf : object
+        King PDF object used by the metric functions.
+
+    metrics : sequence of str, optional
+        Metrics to calculate and plot.
+
+        Available:
+            "CDF_chi2"
+            "CDF_RMS"
+            "CDF_root_median_squared"
+            "CDF_weighted_rms"
+            "CDF_density_weighted_rms"
+            "PDF_RMS"
+            "PDF_root_median_squared"
+            "PDF_weighted_rms"
+            "PDF_density_weighted_rms"
+
+        If None, all metrics are calculated and plotted.
+
+    gamma_idx : int or None
+        If an integer is given, only that spectral-index slice is included
+        in the histogram.
+
+        If None, all gamma indices are included.
+
+        Importantly, the returned arrays always retain the full original
+        shape.
+
+    minimum_counts : int
+        Minimum number of events required for a bin to be considered valid.
+
+    bins : int
+        Number of histogram bins.
+
+    density : bool
+        If True, plot normalized histogram densities rather than counts.
+
+    log_x : bool
+        Use logarithmic x-axis.
+
+    log_y : bool
+        Use logarithmic y-axis.
+
+    figsize : tuple
+        Matplotlib figure size.
+
+    show_statistics : bool
+        Add median and number of valid bins to the legend.
+
+    Returns
+    -------
+    metric_values : dict[str, np.ndarray]
+        Dictionary containing one full-dimensional array for each requested
+        metric.
+
+        Every array has the same shape as fit_parameters["alpha"].
+
+        Invalid bins are represented by np.nan.
+
+        Example
+        -------
+        values["CDF_RMS"][gamma_idx, i, j, k]
+
+        gives the CDF RMS for exactly the same parametrization bin as
+
+        fit_parameters["alpha"][gamma_idx, i, j, k].
+    """
+
+    # ---------------------------------------------------------
+    # Available metrics
+    # ---------------------------------------------------------
+
+    metric_functions = {
+        "CDF_RMS": cdf_rms,
+        "CDF_root_median_squared": cdf_root_median_squared,
+        "CDF_weighted_rms": weighted_cdf_rms,
+        "CDF_density_weighted_rms": density_weighted_cdf_rms,
+        "PDF_RMS": pdf_rms,
+        "PDF_root_median_squared": pdf_root_median_squared,
+        "PDF_weighted_rms": weighted_pdf_rms,
+        "PDF_density_weighted_rms": density_weighted_pdf_rms,
+    }
+
+    available_metrics = [
+        "CDF_chi2",
+        *metric_functions.keys(),
+    ]
+
+    if metrics is None:
+        metrics = available_metrics
+
+    metrics = list(metrics)
+
+    unknown_metrics = [
+        metric
+        for metric in metrics
+        if metric not in available_metrics
+    ]
+
+    if unknown_metrics:
+        raise ValueError(
+            f"Unknown metric(s): {unknown_metrics}\n"
+            f"Available metrics are: {available_metrics}"
+        )
+
+    # ---------------------------------------------------------
+    # Basic stored quantities
+    # ---------------------------------------------------------
+
+    alpha = np.asarray(
+        fit_parameters["alpha"],
+        dtype=float,
+    )
+
+    beta = np.asarray(
+        fit_parameters["beta"],
+        dtype=float,
+    )
+
+    event_counts = np.asarray(
+        fit_parameters["event_counts"]
+    )
+
+    histograms = np.asarray(
+        fit_parameters["histograms"]
+    )
+
+    # ---------------------------------------------------------
+    # Define which fitted bins are valid
+    # ---------------------------------------------------------
+
+    #
+    # histogram dimensions:
+    #
+    #   alpha.shape = (gamma, p1, p2, ...)
+    #
+    # while histogram usually has one extra dpsi dimension:
+    #
+    #   histograms.shape = (gamma, p1, p2, ..., dpsi)
+    #
+
+    histogram_nonempty = np.any(
+        histograms > 0,
+        axis=-1,
+    )
+
+    valid_fit = (
+        (event_counts >= minimum_counts)
+        & histogram_nonempty
+        & np.isfinite(alpha)
+        & np.isfinite(beta)
+        & (alpha > 0)
+        & (beta > 1)
+    )
+
+    # ---------------------------------------------------------
+    # Calculate metrics
+    # ---------------------------------------------------------
+
+    metric_values = {}
+
+    for metric in metrics:
+
+        if metric == "CDF_chi2":
+
+            values = np.asarray(
+                fit_parameters["fit_quality"],
+                dtype=float,
+            ).copy()
+
+        else:
+
+            func = metric_functions[metric]
+
+            values = np.asarray(
+                func(
+                    fit_parameters=fit_parameters,
+                    gamma_idx=gamma_idx,
+                    minimum_counts=minimum_counts,
+                    king_pdf=king_pdf,
+                ),
+                dtype=float,
+            )
+
+            # -------------------------------------------------
+            # Some of your metric functions may return only
+            # one gamma slice when gamma_idx is supplied.
+            # Restore it into a full-shape array if necessary.
+            # -------------------------------------------------
+
+            if values.shape != alpha.shape:
+
+                if (
+                    gamma_idx is not None
+                    and values.shape == alpha[gamma_idx].shape
+                ):
+
+                    full_values = np.full(
+                        alpha.shape,
+                        np.nan,
+                        dtype=float,
+                    )
+
+                    full_values[gamma_idx] = values
+                    values = full_values
+
+                else:
+
+                    raise ValueError(
+                        f"{metric} returned shape {values.shape}, "
+                        f"but expected {alpha.shape}."
+                    )
+
+        # -----------------------------------------------------
+        # Reject invalid values/bins
+        # -----------------------------------------------------
+
+        values = values.copy()
+
+        values[
+            ~np.isfinite(values)
+        ] = np.nan
+
+        values[
+            ~valid_fit
+        ] = np.nan
+
+        # If a particular gamma slice was requested, keep all
+        # other slices as NaN in the returned object as well.
+        if gamma_idx is not None:
+
+            gamma_mask = np.zeros(
+                alpha.shape,
+                dtype=bool,
+            )
+
+            gamma_mask[gamma_idx] = True
+
+            values[
+                ~gamma_mask
+            ] = np.nan
+
+        metric_values[metric] = values
+
+    # ---------------------------------------------------------
+    # Plot
+    # ---------------------------------------------------------
+
+    fig, ax = plt.subplots(
+        figsize=figsize
+    )
+
+    for metric in metrics:
+
+        values = metric_values[metric]
+
+        finite_values = values[
+            np.isfinite(values)
+        ]
+
+        if len(finite_values) == 0:
+            print(
+                f"Warning: no valid values found for {metric}"
+            )
+            continue
+
+        if show_statistics:
+
+            median = np.median(
+                finite_values
+            )
+
+            label = (
+                f"{metric} "
+                f"(N={len(finite_values)}, "
+                f"median={median:.3g})"
+            )
+
+        else:
+
+            label = metric
+
+        ax.hist(
+            finite_values,
+            bins=bins,
+            density=density,
+            histtype="step",
+            linewidth=2,
+            label=label,
+        )
+
+    # ---------------------------------------------------------
+    # Axes
+    # ---------------------------------------------------------
+
+    ax.set_xlabel(
+        "Metric value"
+    )
+
+    ax.set_ylabel(
+        "Density"
+        if density
+        else "Number of fitted bins"
+    )
+
+    if log_x:
+        ax.set_xscale("log")
+
+    if log_y:
+        ax.set_yscale("log")
+
+    if gamma_idx is None:
+        title = (
+            "Distribution of King fit-quality metrics"
+        )
+    else:
+        title = (
+            "Distribution of King fit-quality metrics "
+            f"(gamma_idx={gamma_idx})"
+        )
+
+    ax.set_title(title)
+
+    ax.grid(
+        alpha=0.3
+    )
+
+    ax.legend(
+        fontsize=8,
+        framealpha=0.9,
+    )
+
+    plt.tight_layout()
+    plt.show()
+
+    return metric_values
